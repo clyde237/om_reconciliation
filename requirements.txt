@@ -1,0 +1,21 @@
+# Framework UI
+streamlit>=1.35.0
+
+# Manipulation et analyse de données
+pandas>=2.2.0
+numpy>=1.26.0
+openpyxl>=3.1.2
+xlsxwriter>=3.2.0
+
+# Algorithmes de matching flou
+rapidfuzz>=3.8.0
+
+# Validation et typage
+pydantic>=2.7.0
+python-dotenv>=1.0.1
+
+# Journalisation et utilitaires
+loguru>=0.7.2
+
+# Tests
+pytest>=8.1.0

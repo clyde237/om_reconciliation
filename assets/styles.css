@@ -1,0 +1,43 @@
+/* Styles personnalisés pour OM Reconciliation Dashboard */
+
+:root {
+    --primary-color: #ff6600; /* Orange Money Brand Color */
+    --primary-dark: #cc5200;
+    --secondary-color: #1e293b;
+    --background-color: #f8fafc;
+    --card-bg: #ffffff;
+    --text-primary: #0f172a;
+    --text-muted: #64748b;
+    --success: #16a34a;
+    --warning: #ca8a04;
+    --danger: #dc2626;
+}
+
+/* En-têtes */
+h1, h2, h3 {
+    color: var(--secondary-color);
+    font-weight: 700;
+}
+
+/* Cartes KPI */
+[data-testid="stMetric"] {
+    background-color: var(--card-bg);
+    padding: 1rem 1.25rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    border: 1px solid #e2e8f0;
+}
+
+/* Boutons principaux */
+button[kind="primary"] {
+    background-color: var(--primary-color) !important;
+    border-color: var(--primary-color) !important;
+    color: #ffffff !important;
+    border-radius: 0.5rem !important;
+    font-weight: 600 !important;
+}
+
+button[kind="primary"]:hover {
+    background-color: var(--primary-dark) !important;
+    border-color: var(--primary-dark) !important;
+}
