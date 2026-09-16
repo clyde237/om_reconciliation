@@ -1,7 +1,7 @@
 # OM Reconciliation — Découpage en phases de développement
 
 > Document de pilotage dérivé de [`om_reconciliation_projet.md`](om_reconciliation_projet.md).
-> Mis à jour le 15/09/2026 après analyse des quatre sources réelles.
+> Mis à jour le 16/09/2026 — P0 à P3 livrées.
 > Estimations indicatives pour **1 développeur**.
 
 **Documents liés :** [analyse des sources réelles](docs/sources_reelles.md) ·
@@ -11,24 +11,34 @@
 
 ## 1. Lecture rapide
 
-| Phase | Titre | Dépend de | Estim. | Livrable vérifiable |
-|---|---|---|---|---|
-| **P0** | Socle technique & cadrage | — | 1 j | `pytest` vert, `streamlit run app.py` démarre |
-| **P1** | ✅ Noyau de normalisation (Decimal, dates, textes) | P0 | 2 j | **Livrée** |
-| **P2** | ✅ Lecture & mapping des colonnes | P1 | 3–4 j | **Livrée** — 122 tests au vert |
-| **P3** | Moteur de rapprochement | P2 | 4 j | La journée du 16/04/2026 rapprochée 3/3 |
-| **P4** | Analyse, statuts & observations | P3 | 3 j | Les 9 statuts + compteurs globaux du §8 |
-| **P5** | Rapport Excel d'audit (7 feuilles) | P4 | 2–3 j | `Rapprochement_OM_Avril_2026.xlsx` |
-| **P6** | UI Streamlit du contrôle (étapes 1→3) | P5 | 3 j | Parcours import → résultats → anomalies |
-| **P7** | Validation humaine & verrou d'export | P6 | 2 j | Export Sage bloqué si anomalie non validée |
-| **P8** | Écriture comptable + export PNM / XLSX / TXT | P7 | 4 j | Fichier `.pnm` importé par Sage 100 |
-| **P9** | Durcissement : sécurité, perfs, doc | P8 | 2 j | Checklist §16 satisfaite |
-| **P10** | Évolutivité (§18) | post-V1 | — | Hors périmètre V1 |
+| Phase | Titre | État | Reste | Reliquat |
+|---|---|---|---:|---|
+| **P0** | Socle technique & cadrage | ✅ | 0,5 j | Logger jamais appelé, versions non figées |
+| **P1** | Noyau de normalisation | ✅ | — | — |
+| **P2** | Lecture & mapping des colonnes | ✅ | — | — |
+| **P3** | Moteur de rapprochement | ✅ | — | — |
+| **P4** | Analyse, statuts & observations | ◐ | 2 j | Observations §7, cumul mensuel, 11 contrôles du §8 |
+| **P5** | Rapport Excel d'audit | ○ | 2–3 j | Les 7 feuilles, rien n'existe |
+| **P6** | UI du contrôle | ◐ | 1 j | Filtres par statut et par compte, recherche, cache |
+| **P7** | Validation humaine & verrou | ◐ | 1,5 j | Le verrou est calculé ; la validation reste à faire |
+| **P8** | Écriture comptable & exports | ○ | 4 j | Mapper et exportateurs, rien n'existe |
+| **P9** | Durcissement | ◐ | 1 j | Masquage des logs, purge, perfs, mode d'emploi |
+| **P10** | Évolutivité (§18) | — | — | Hors périmètre V1 |
+
+**✅ terminée · ◐ partielle · ○ non commencée · Reste total : 12 à 13 jours** sur les
+26 à 30 estimés au départ.
 
 **Jalons :**
-- **J1 — Moteur headless** = P0 → P5. Le rapport d'audit est généré par script, sans interface.
-- **J2 — V1 Contrôle** = J1 + P6 + P7. Le contrôleur travaille dans l'application, sans export.
-- **J3 — V1 Complète** = J2 + P8 + P9.
+- **J1 — Moteur headless** = P0 → P5 · **reste ~5 j** (P4 puis P5). Le rapport d'audit
+  complet est généré, sans interface.
+- **J2 — V1 Contrôle** = J1 + P6 + P7 · **reste ~2,5 j**. Le contrôleur travaille
+  entièrement dans l'application, sans export.
+- **J3 — V1 Complète** = J2 + P8 + P9 · **reste ~5 j**.
+
+> **Où en est-on.** Quatre phases sur onze sont terminées, quatre sont partielles, deux
+> n'ont pas commencé. Le chemin critique restant est court mais réel : **P4 et P5**
+> produisent le rapport d'audit, **P8** produit l'écriture comptable. Ce sont les deux
+> seuls gros blocs vierges.
 
 > **Évolution depuis la première version du plan.** L'export PNM était isolé en phase distincte,
 > bloqué faute de spécification. Les quatre échantillons Sage fournis ont levé ce blocage : le
