@@ -24,11 +24,23 @@ class SageConfig:
     currency: str = "XAF"
     #: Format de date du format PNM : JJMMAA, confirmé sur les quatre échantillons.
     date_format_sage: str = "%d%m%y"
-    #: Gabarit du libellé des arrhes, relevé dans le grand livre : « AVCE <NOM> <date> ».
-    label_template: str = "AVCE {client} {date}"
+    #: Gabarit du libellé d'une arrhe individuelle, relevé dans le grand livre.
+    label_template_arrhes: str = "AVCE {client} {date}"
+    #: Gabarit du libellé de la recette agrégée du jour — le résidu du rapprochement.
+    #: Convention la plus récente du grand livre (avril 2026) ; les écritures plus
+    #: anciennes écrivent « SVT JRNAL DE CAISSE MOMO <date> ». Saisies à la main, donc
+    #: irrégulières : gabarit à confirmer avec le comptable.
+    label_template_recette: str = "SVT JNAL MOMO DU {date}"
 
 
 DEFAULT_SAGE_CONFIG = SageConfig()
+
+
+#: Longueur du libellé observée dans le grand livre du client. Plusieurs écritures
+#: atteignent exactement 35 caractères et aucune ne les dépasse : l'installation Sage
+#: du client tient donc un libellé de 35, quand les échantillons PNM n'en montrent
+#: que 25. Contradiction ouverte, suivie en B10 (docs/format_pnm.md §4).
+LIBELLE_MAX_GRAND_LIVRE = 35
 
 
 # --- Format PNM ---------------------------------------------------------------

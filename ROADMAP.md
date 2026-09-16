@@ -14,7 +14,7 @@
 | Phase | Titre | Dépend de | Estim. | Livrable vérifiable |
 |---|---|---|---|---|
 | **P0** | Socle technique & cadrage | — | 1 j | `pytest` vert, `streamlit run app.py` démarre |
-| **P1** | Noyau de normalisation (Decimal, dates, textes) | P0 | 2 j | `normalize_amount("90 200,00 FCFA") -> Decimal("90200.00")` |
+| **P1** | ✅ Noyau de normalisation (Decimal, dates, textes) | P0 | 2 j | **Livrée** — 103 tests au vert |
 | **P2** | Lecture & mapping des colonnes | P1 | 3–4 j | Les 177 transactions OM et les lignes du journal extraites proprement |
 | **P3** | Moteur de rapprochement | P2 | 4 j | La journée du 16/04/2026 rapprochée 3/3 |
 | **P4** | Analyse, statuts & observations | P3 | 3 j | Les 9 statuts + compteurs globaux du §8 |
@@ -43,9 +43,17 @@
 | **Statuts bloquant l'export** | `ECART_MONTANT`, `MANQUANT_OM`, `MANQUANT_JOURNAL`, `A_CONTROLER` |
 | **Version Python** | **3.14** — validée en pratique : Streamlit 1.63, Pandas 3.0.5, OpenPyXL 3.1.5, RapidFuzz 3.14.6, Pydantic 2.13.5, Loguru 0.7.3, Pytest 9.1.1 s'installent et s'importent |
 | **Format d'import Sage** | **PNM**, relevé sur quatre fichiers réels et couvert par 15 tests |
+| **Résidu du rapprochement** | Les encaissements OM de la journée sans arrhe correspondante deviennent la **recette du jour** (`RECETTE_JOUR`), pas des manquants |
 
 Ces choix sont posés dans [`config/matching_config.py`](config/matching_config.py)
 (`BLOCKING_STATUSES`) et [`config/sage_config.py`](config/sage_config.py) (`PNM_LAYOUT`).
+
+> **Arbitrage du 16/09/2026 — le résidu est la recette du jour.** Le relevé porte tous les
+> encaissements du point de vente, le journal des arrhes seulement les arrhes. Les six
+> encaissements du 16/04 se décomposent en trois arrhes et trois recettes ordinaires. Le grand
+> livre confirme le rapport de force : 88 recettes agrégées pour 9 arrhes individuelles. Sans
+> cette règle, `MANQUANT_JOURNAL` — statut bloquant — se déclencherait chaque jour sur des
+> opérations normales.
 
 Deux conséquences de l'arbitrage sur les statuts, à garder en tête :
 
@@ -159,11 +167,12 @@ notamment le gabarit `AVCE <NOM CLIENT> <date>` des arrhes — mais le format d'
 | B7 | **Compte et journal Orange Money** | P8 | Le grand livre fourni porte le compte `55300000` « TRANSFERT VIA MTN **MOMO2** », journal `MOMO`. Existe-t-il un compte et un journal distincts pour OM, ou les deux opérateurs partagent-ils celui-ci ? |
 | B8 | **Contrepartie de l'écriture** | P8 | Le grand livre ne montre qu'un côté. Quelle contrepartie pour une arrhe encaissée par OM ? Et les commissions (~1 % prélevé à la transaction) ? |
 | B9 | **Numéro de pièce** | P8 | Les pièces (6417, 6419, 6445…) sont-elles attribuées par Sage à l'import, ou l'export doit-il les fournir ? |
-| B10 | **Longueur du libellé** | P8 | Le PNM relevé donne 25 caractères ; les écritures existantes du client vont jusqu'à 35. À vérifier sur l'installation Sage réelle. |
+| B10 | **Longueur du libellé** | P8 | Le PNM relevé donne 25 caractères ; les écritures du client atteignent **exactement 35 sans jamais les dépasser**, ce qui plaide pour un champ de 35 sur cette installation. Un libellé de 35 tronqué à 25 perdrait la date. |
+| B13 | **Gabarit des libellés** | P8 | Les libellés du grand livre sont saisis à la main et dérivent selon les mois (`SVT JRNAL DE CAISSE MOMO`, `SVT JNAL MOMO DU`, `SVT JOURNAL DU`…). Défaut appliqué : la convention d'avril. À confirmer. |
 | B11 | **Décimales en XAF** | P8 | Les échantillons sont en EUR à 2 décimales forcées. Sage attend-il `90200.00` ou `90200` en franc CFA ? |
 
-B7 à B11 se posent tous au moment d'écrire le mapper : une seule séance avec le comptable les
-tranche. Aucun d'eux ne bloque les phases P1 à P7.
+B7 à B11 et B13 se posent tous au moment d'écrire le mapper : une seule séance avec le
+comptable les tranche. Aucun d'eux ne bloque les phases P1 à P7.
 
 > **Levé le 15/09/2026 — le journal se tire par journée.** Le plan supposait qu'il fallait un
 > export du journal sur un mois complet. C'est faux : une journée déposée définit le périmètre
@@ -250,7 +259,13 @@ justifié par une règle nommée.
 ## Phase 4 — Analyse, statuts & observations
 
 - Table unifiée, une ligne par opération, colonnes du §9.
-- Affectation des 9 statuts ; `BLOCKING_STATUSES` détermine ce qui remontera en P7.
+- Affectation des statuts ; `BLOCKING_STATUSES` détermine ce qui remontera en P7.
+- **Classement du résidu en `RECETTE_JOUR`** : les encaissements OM de la journée sans arrhe
+  correspondante sont la recette ordinaire, pas des manquants. Le contrôleur peut requalifier
+  une ligne en `MANQUANT_JOURNAL` s'il juge qu'elle aurait dû faire l'objet d'une arrhe.
+- **Invariant de la journée**, à vérifier et à afficher :
+  `total encaissements OM du jour = arrhes rapprochées + recette du jour + écarts non résolus`.
+  Sur le 16/04 : 290 600 + 18 000 = 308 600.
 - Observations automatiques (§7) par générateur paramétré.
 - `monthly_summary.py` + les 11 contrôles globaux du §8, avec l'invariant
   `total rapproché + total non rapproché = total journal`.
@@ -297,8 +312,12 @@ et qu'une ligne rejetée n'apparaît jamais dans l'écriture.
 
 > Nécessite B7 à B11.
 
-- `mapper.py` : transactions validées → lignes comptables. Gabarit `AVCE <NOM CLIENT> <date>`
-  relevé dans le grand livre client. Contrôle d'**équilibre bloquant** par pièce et sur le lot.
+- `mapper.py` : transactions validées → lignes comptables, **deux natures d'écriture** relevées
+  dans le grand livre client :
+  - une ligne `AVCE <NOM CLIENT> <date>` **par arrhe** rapprochée et validée ;
+  - une ligne `SVT JNAL MOMO DU <date>` **par journée**, agrégeant le résidu.
+
+  Contrôle d'**équilibre bloquant** par pièce et sur le lot.
 - `pnm_exporter.py` : piloté par `PNM_LAYOUT`, jamais par des concaténations codées en dur.
   Réduction ASCII obligatoire. Dépassement de champ → **échec explicite ou troncature tracée**,
   jamais silencieux.

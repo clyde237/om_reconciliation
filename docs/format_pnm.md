@@ -74,7 +74,7 @@ portent 729, 730, 731.
 
 | # | Question | Pourquoi ça compte |
 |---|---|---|
-| 1 | **Longueur réelle du libellé** | Les échantillons donnent 25 caractères. Or le grand livre du client (`OM SAGE.xlsx`) contient des libellés de 35 caractères comme `AVCE NJINI BERLINDA MUNGHI 04/04/26`. Soit l'installation accepte 35, soit ces écritures ont été saisies à la main et l'import tronquera. |
+| 1 | **Longueur réelle du libellé** | Les échantillons donnent 25 caractères. Or le grand livre du client contient des libellés qui atteignent **exactement 35 caractères sans jamais les dépasser** — `AVCE NJINI BERLINDA MUNGHI 04/04/26`, `SVT JNAL MOMO 03/04/26 RECU LE16/04`. Cette borne nette plaide pour un champ de 35 sur cette installation, les échantillons provenant d'une version plus ancienne. À trancher avant l'export : un libellé de 35 tronqué à 25 perdrait la date. |
 | 2 | **Décimales en XAF** | Les échantillons sont en EUR avec 2 décimales forcées. Le franc CFA n'a pas de sous-unité : reste à savoir si Sage attend `90200.00` ou `90200`. |
 | 3 | **Largeur exacte du champ montant** | Tous les montants des échantillons sont inférieurs à 10 000. La borne gauche du champ (84 ?) n'est pas démontrée. Les arrhes OM vont jusqu'à 6 000 000 : à tester. |
 | 4 | **Indicateurs `F`, `F`, `N`** | Constants sur les quatre fichiers, donc leur sémantique reste inconnue. À reprendre tels quels par défaut. |

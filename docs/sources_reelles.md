@@ -158,6 +158,38 @@ Le même montant réapparaît d'ailleurs à d'autres dates du mois — 110 200 l
 90 200 le 14 — ce qui confirme que **le montant seul ne discrimine pas** : la date est
 indispensable, et la tolérance de dates doit rester étroite.
 
+### Le résidu du rapprochement est la recette du jour
+
+Filtré sur le 16/04, le relevé expose **six** encaissements clients, pas trois :
+
+| Montant | Présent dans le journal des arrhes |
+|---:|---|
+| 90 200 · 110 200 · 90 200 | oui — les trois arrhes |
+| 1 500 · 6 000 · 10 500 | non |
+
+Les trois derniers ne sont pas des anomalies. Le relevé porte **tous** les encaissements du
+point de vente ; le journal des arrhes n'enregistre que les arrhes. Le reste, ce sont les
+recettes ordinaires — restaurant, bar.
+
+Le grand livre le confirme sans ambiguïté : sur 104 écritures du journal `MOMO`, on compte
+**88 recettes agrégées** (`SVT JNAL MOMO DU <date>`, une par journée) pour **9 arrhes
+individuelles** (`AVCE <NOM CLIENT>`). La recette agrégée est le cas dominant.
+
+**Arbitrage du 16/09/2026 : le résidu devient la recette du jour** (`RECETTE_JOUR`), statut non
+bloquant. D'où l'invariant de contrôle d'une journée :
+
+```text
+total des encaissements OM du jour
+  = arrhes rapprochées + recette du jour + écarts non résolus
+```
+
+Sur le 16/04 : `290 600 + 18 000 = 308 600`.
+
+Sans cette règle, les recettes ordinaires seraient classées en `MANQUANT_JOURNAL` — un statut
+bloquant — et le verrou d'export se déclencherait chaque jour sur des opérations normales. Le
+contrôleur garde la main : une ligne classée en recette peut être requalifiée manuellement en
+`MANQUANT_JOURNAL` si elle aurait dû faire l'objet d'une arrhe.
+
 ---
 
 ## 4. OM SAGE.xlsx — ce que le fichier est réellement
@@ -179,13 +211,21 @@ Il reste précieux : il montre **la forme exacte des écritures cibles**.
 | P | Crédit | `6082654` |
 | R | Solde progressif | — |
 
-Deux natures d'écriture cohabitent :
+Deux natures d'écriture cohabitent, et **l'export doit produire les deux** :
 
-- **Recette agrégée du jour** — `SVT JNAL MOMO DU 06/04/2026`, une ligne par journée ;
-- **Arrhes individuelles** — `AVCE <NOM CLIENT> <date>`, une ligne par encaissement.
+| Nature | Gabarit | Fréquence | Origine dans le contrôle |
+|---|---|---:|---|
+| Recette agrégée du jour | `SVT JNAL MOMO DU <date>` | 88 | le **résidu** du rapprochement |
+| Arrhe individuelle | `AVCE <NOM CLIENT> <date>` | 9 | chaque arrhe **rapprochée et validée** |
 
-C'est la seconde forme que l'export doit produire : les arrhes rapprochées et validées
-deviennent une ligne `AVCE …` au débit du compte de transfert, journal `MOMO`.
+Les libellés sont saisis à la main et le prouvent : la convention dérive selon les mois
+(`SVT JRNAL DE CAISSE MOMO` en janvier, `SVT JNAL MOMO DU` en avril, avec des variantes
+`SVT JOURNAL DU` et `SVT RECETTE MOMO DU`), et l'on relève un `10/04/*2026` à l'astérisque
+parasite. Le gabarit retenu par défaut est la convention la plus récente ; il reste à confirmer.
+
+**Plusieurs libellés atteignent exactement 35 caractères et aucun ne les dépasse** :
+l'installation Sage du client tient donc un libellé de 35, quand les échantillons PNM n'en
+montrent que 25. C'est la contradiction suivie en B10.
 
 ### Questions ouvertes que ce fichier soulève
 
@@ -194,5 +234,5 @@ deviennent une ligne `AVCE …` au débit du compte de transfert, journal `MOMO`
 | 1 | Le compte s'appelle « TRANSFERT VIA MTN **MOMO2** » et le journal est `MOMO`. **Existe-t-il un compte et un journal distincts pour Orange Money**, ou les deux opérateurs partagent-ils ce compte ? |
 | 2 | Quelle est **la contrepartie** ? Le grand livre ne montre qu'un côté de l'écriture. |
 | 3 | **Comment est attribué le n° de pièce** (6417, 6419, 6445…) ? Compteur Sage ou saisie manuelle ? L'export doit-il le fournir ou le laisser vide ? |
-| 4 | Les libellés font jusqu'à **35 caractères**, au-delà des 25 relevés dans le format PNM (voir [`format_pnm.md`](format_pnm.md), §4). |
-| 5 | Les libellés existants sont irréguliers : `SVT JOURNAL DU`, `SVT RECETTE MOMO DU`, `SVT JNAL MOMO DU`, `SVT JNAL RECETTE DU`, et un `10/04/*2026` avec une astérisque parasite. **Quel gabarit retenir** pour les écritures générées ? |
+| 4 | Les libellés atteignent **exactement 35 caractères** sans jamais les dépasser, alors que le format PNM relevé n'en offre que 25 (voir [`format_pnm.md`](format_pnm.md), §4). Quelle est la largeur réelle du champ sur cette installation ? |
+| 5 | Les libellés existants sont irréguliers et manifestement saisis à la main. **Quel gabarit retenir** pour les écritures générées ? Défaut appliqué : `SVT JNAL MOMO DU <date>` et `AVCE <NOM> <date>`. |

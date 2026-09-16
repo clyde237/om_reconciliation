@@ -128,3 +128,37 @@ def test_le_lot_conserve_le_motif_de_chaque_rejet():
     assert lot.nb_lues == 4
     assert lot.resume() == "2 ligne(s) retenue(s), 2 écartée(s)"
     assert lot.rejets[0] == (11, "sous-total des arrhes antérieures")
+
+
+# --- Règle du résidu : les encaissements non appariés sont la recette du jour ------
+
+
+def test_le_residu_n_est_pas_un_manquant():
+    """Arbitrage du 16/09/2026 : le résidu du rapprochement est la recette du jour.
+
+    Le relevé porte tous les encaissements du point de vente, le journal des arrhes
+    seulement les arrhes. Sans cette règle, les recettes ordinaires seraient classées
+    en MANQUANT_JOURNAL — un statut bloquant — et le verrou d'export se déclencherait
+    chaque jour sur des opérations normales.
+    """
+    from config.matching_config import BLOCKING_STATUSES, MatchStatus, STATUT_RESIDU_OM
+
+    assert STATUT_RESIDU_OM is MatchStatus.RECETTE_JOUR
+    assert STATUT_RESIDU_OM not in BLOCKING_STATUSES
+    assert MatchStatus.MANQUANT_JOURNAL in BLOCKING_STATUSES
+
+
+def test_l_invariant_de_la_journee_du_16_04():
+    """Sur la journée réelle : 6 encaissements OM = 3 arrhes + 3 recettes."""
+    encaissements = [Decimal(m) for m in ("90200", "110200", "90200", "1500", "6000", "10500")]
+    arrhes_journal = [Decimal(m) for m in ("90200", "110200", "90200")]
+
+    reste = list(encaissements)
+    rapprochees = []
+    for montant in arrhes_journal:
+        reste.remove(montant)  # consommation : une ligne appariée ne l'est qu'une fois
+        rapprochees.append(montant)
+
+    assert sum(rapprochees) == Decimal("290600")
+    assert sum(reste) == Decimal("18000")
+    assert sum(rapprochees) + sum(reste) == sum(encaissements)
