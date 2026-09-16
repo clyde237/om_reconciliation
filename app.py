@@ -19,13 +19,11 @@ from ui.sage_export_view import render_sage_export_view
 
 
 def init_session_state():
-    """Initialise l'état global de la session Streamlit."""
-    if "df_om" not in st.session_state:
-        st.session_state["df_om"] = None
-    if "df_arrhes" not in st.session_state:
-        st.session_state["df_arrhes"] = None
-    if "reconciliation_result" not in st.session_state:
-        st.session_state["reconciliation_result"] = None
+    """L'état est posé par la vue d'import ; rien à pré-remplir ici.
+
+    Les vues interrogent `ui.session`, qui renvoie None tant qu'aucun contrôle n'a
+    été lancé, et affichent alors l'invitation à importer.
+    """
 
 
 def main():

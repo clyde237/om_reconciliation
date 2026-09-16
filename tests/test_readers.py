@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from config.matching_config import MatchStatus
 from config.settings import JOURNAL_ARRHES_DIR, RELEVES_OM_DIR
 from src.models import Periode
 from src.readers import JournalReader, OMReader
@@ -204,6 +205,8 @@ def _fichier_reel(dossier: Path) -> Path | None:
 )
 def test_sur_les_fichiers_reels():
     """Contrôle de non-régression quand les fichiers client sont présents localement."""
+    from src.matching import ReconciliationMatcher
+
     journal = JournalReader(_fichier_reel(JOURNAL_ARRHES_DIR)).read()
     releve = OMReader(_fichier_reel(RELEVES_OM_DIR)).read()
 
@@ -212,3 +215,14 @@ def test_sur_les_fichiers_reels():
     assert len(releve.comptes) == 4
     assert len(releve.transactions) + len(releve.commissions) == 177
     assert len(releve.encaissements(journal.periode)) == 6
+
+    resultat = ReconciliationMatcher().run(journal.periode, journal.lignes, releve.transactions)
+
+    assert len(resultat.appariements) == 3
+    assert resultat.taux_rapprochement == 100.0
+    assert all(a.statut is MatchStatus.CONFORME for a in resultat.appariements)
+    assert resultat.total_rapproche == Decimal("290600")
+    assert resultat.total_recette_du_jour == Decimal("18000")
+    assert resultat.total_om == Decimal("308600")
+    assert resultat.invariant_respecte()
+    assert resultat.export_possible
