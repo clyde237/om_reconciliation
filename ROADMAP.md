@@ -14,8 +14,8 @@
 | Phase | Titre | Dépend de | Estim. | Livrable vérifiable |
 |---|---|---|---|---|
 | **P0** | Socle technique & cadrage | — | 1 j | `pytest` vert, `streamlit run app.py` démarre |
-| **P1** | ✅ Noyau de normalisation (Decimal, dates, textes) | P0 | 2 j | **Livrée** — 103 tests au vert |
-| **P2** | Lecture & mapping des colonnes | P1 | 3–4 j | Les 177 transactions OM et les lignes du journal extraites proprement |
+| **P1** | ✅ Noyau de normalisation (Decimal, dates, textes) | P0 | 2 j | **Livrée** |
+| **P2** | ✅ Lecture & mapping des colonnes | P1 | 3–4 j | **Livrée** — 122 tests au vert |
 | **P3** | Moteur de rapprochement | P2 | 4 j | La journée du 16/04/2026 rapprochée 3/3 |
 | **P4** | Analyse, statuts & observations | P3 | 3 j | Les 9 statuts + compteurs globaux du §8 |
 | **P5** | Rapport Excel d'audit (7 feuilles) | P4 | 2–3 j | `Rapprochement_OM_Avril_2026.xlsx` |
@@ -188,10 +188,10 @@ comptable les tranche. Aucun d'eux ne bloque les phases P1 à P7.
 - ✅ `venv` Python 3.14.4, dépendances installées et vérifiées.
 - ✅ Les 9 statuts métier et `BLOCKING_STATUSES` dans `config/matching_config.py`.
 - ✅ Journal, compte et table `PNM_LAYOUT` dans `config/sage_config.py`.
-- ⏳ `config/settings.py` : chargement effectif du `.env`.
+- ✅ `config/settings.py` : chargement effectif du `.env` et correspondance des colonnes par alias.
 - ⏳ `src/utils/logger.py` : loguru, **jamais de numéro de téléphone ni de montant client en clair**.
 - ⏳ Figer les versions majeures dans `requirements.txt` — Pandas 3.0 change le comportement par défaut.
-- ⏳ Jeux de données **anonymisés** dans `tests/fixtures/`, dérivés des fichiers réels.
+- ✅ Jeux de données **anonymisés** dans `tests/fixtures/`, régénérables par script.
 
 **Définition de terminé :** `streamlit run app.py` affiche les 5 vues, `pytest` sans échec.
 
@@ -232,8 +232,15 @@ restreintes à la journée contrôlée.
 - **Colonnes par alias**, pas en dur : ce relevé est un export daté, sa mise en forme bougera.
 - Rapport d'import : lignes lues, écartées, motif de chaque rejet.
 
-**Définition de terminé :** les 177 transactions sont extraites et ventilées par compte, et
-chaque ligne écartée est justifiée.
+**Livrée.** Sur les fichiers réels : période lue au 16/04/2026, 3 lignes Orange Money
+totalisant 290 600, 4 sous-relevés reconnus, 171 transactions et 6 lignes de commission
+séparées, 6 encaissements clients sur la journée contrôlée. Les 15 lignes écartées du journal
+portent chacune leur motif — sous-total, ligne de total, note de bas de page, pagination,
+bloc Récapitulatif.
+
+Les tests s'appuient sur des classeurs d'exemple anonymisés qui reproduisent tous les pièges
+structurels ; un test supplémentaire s'exécute sur les fichiers réels lorsqu'ils sont présents
+localement, et se saute sinon.
 
 ---
 
