@@ -1,0 +1,13 @@
+# Les fichiers traités sont des pièces comptables : aucune donnée ne sort du poste.
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+maxUploadSize = 50
+# Écoute uniquement le poste : sans cette ligne, Streamlit publie l'application
+# sur le réseau local et affiche une URL externe au démarrage.
+address = "localhost"
+
+[theme]
+base = "light"

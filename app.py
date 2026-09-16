@@ -1,6 +1,13 @@
 """
 Application OM Reconciliation - Point d'entrée principal.
+
+Ce module se lance avec `streamlit run app.py`, jamais avec `python app.py` :
+Streamlit a besoin de son propre exécuteur pour disposer d'un contexte de session.
+Lancé directement, le script afficherait une page vide et des dizaines
+d'avertissements « missing ScriptRunContext ».
 """
+
+import sys
 
 import streamlit as st
 from config.settings import APP_TITLE, APP_VERSION
@@ -62,5 +69,26 @@ def main():
         render_sage_export_view()
 
 
+def _lance_par_streamlit() -> bool:
+    """Vrai si le script tourne bien sous `streamlit run`."""
+    try:
+        from streamlit.runtime import exists
+
+        return exists()
+    except ImportError:  # version de Streamlit sans cette API
+        return True
+
+
 if __name__ == "__main__":
+    if not _lance_par_streamlit():
+        commande = f"{sys.executable.replace('/python', '/streamlit')} run {__file__}"
+        print(
+            "OM Reconciliation est une application Streamlit : elle ne se lance pas\n"
+            "avec python, qui ne lui fournit aucun contexte de session.\n\n"
+            f"    {commande}\n\n"
+            "ou, plus court, depuis la racine du projet :\n\n"
+            "    make run\n",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     main()
