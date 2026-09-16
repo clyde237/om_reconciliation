@@ -81,13 +81,16 @@ def _lance_par_streamlit() -> bool:
 
 if __name__ == "__main__":
     if not _lance_par_streamlit():
-        commande = f"{sys.executable.replace('/python', '/streamlit')} run {__file__}"
+        # Lignes et commandes courtes : sur un terminal étroit, un repli au
+        # milieu d'une commande la rend impossible à copier.
         print(
-            "OM Reconciliation est une application Streamlit : elle ne se lance pas\n"
-            "avec python, qui ne lui fournit aucun contexte de session.\n\n"
-            f"    {commande}\n\n"
-            "ou, plus court, depuis la racine du projet :\n\n"
-            "    make run\n",
+            "OM Reconciliation est une application Streamlit.\n"
+            "Elle ne se lance pas avec python, qui ne lui fournit\n"
+            "aucun contexte de session.\n\n"
+            "Depuis la racine du projet :\n\n"
+            "    make run\n\n"
+            "ou, sans make :\n\n"
+            "    .venv/bin/streamlit run app.py\n",
             file=sys.stderr,
         )
         raise SystemExit(1)
