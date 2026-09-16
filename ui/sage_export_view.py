@@ -18,17 +18,18 @@ def render_sage_export_view():
     if resultat is None:
         return
 
-    if resultat.export_possible:
+    from src.analysis.validation import GestionnaireVerrou
+    journal_dec = session.decisions()
+    verrou = GestionnaireVerrou.evaluer(resultat, journal_dec)
+
+    if verrou.export_autorise:
         st.success(
             f"Journée du {resultat.periode.libelle} : aucune anomalie bloquante. "
             "L'export sera ouvert dès que la génération sera disponible."
         )
     else:
-        detail = ", ".join(
-            f"{nombre} {statut.value}" for statut, nombre in resultat.anomalies_bloquantes.items()
-        )
         st.error(
-            f"**Export bloqué** — {detail}. Une opération du journal ne devient pas une "
+            f"**Export bloqué** — {verrou.motif_blocage}. Une opération du journal ne devient pas une "
             "écriture comptable du seul fait qu'elle existe : elle doit être rapprochée, "
             "contrôlée, puis validée."
         )

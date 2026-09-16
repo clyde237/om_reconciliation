@@ -17,28 +17,29 @@
 | **P1** | Noyau de normalisation | ✅ | — | — |
 | **P2** | Lecture & mapping des colonnes | ✅ | — | — |
 | **P3** | Moteur de rapprochement | ✅ | — | — |
-| **P4** | Analyse, statuts & observations | ◐ | 2 j | Observations §7, cumul mensuel, 11 contrôles du §8 |
-| **P5** | Rapport Excel d'audit | ○ | 2–3 j | Les 7 feuilles, rien n'existe |
-| **P6** | UI du contrôle | ◐ | 1 j | Filtres par statut et par compte, recherche, cache |
-| **P7** | Validation humaine & verrou | ◐ | 1,5 j | Le verrou est calculé ; la validation reste à faire |
+| **P4** | Analyse, statuts & observations | ✅ | — | Livrée — observations §7, synthèse mensuelle multi-comptes, 11 contrôles §8 |
+| **P5** | Rapport Excel d'audit | ✅ | — | Livrée — classeur complet à 7 feuilles, styles FCFA, filtres et volets figés |
+| **P6** | UI du contrôle | ✅ | — | Livrée — filtres par statut et par compte OM, recherche instantanée |
+| **P7** | Validation humaine & verrou | ✅ | — | Livrée — journal des décisions, workflow validé/rejeté avec motif, levée du verrou (§19) |
 | **P8** | Écriture comptable & exports | ○ | 4 j | Mapper et exportateurs, rien n'existe |
 | **P9** | Durcissement | ◐ | 1 j | Masquage des logs, purge, perfs, mode d'emploi |
 | **P10** | Évolutivité (§18) | — | — | Hors périmètre V1 |
 
-**✅ terminée · ◐ partielle · ○ non commencée · Reste total : 12 à 13 jours** sur les
-26 à 30 estimés au départ.
+**✅ terminée · ◐ partielle · ○ non commencée · Reste total : ~5 à 5,5 jours** sur les
+26 à 30 estimés au départ (8 phases terminées sur 11).
 
 **Jalons :**
-- **J1 — Moteur headless** = P0 → P5 · **reste ~5 j** (P4 puis P5). Le rapport d'audit
-  complet est généré, sans interface.
-- **J2 — V1 Contrôle** = J1 + P6 + P7 · **reste ~2,5 j**. Le contrôleur travaille
-  entièrement dans l'application, sans export.
+- **J1 — Rapport d'audit complet (Moteur headless + Excel)** = P0 → P5 · **✅ ATTEINT** (16/09/2026).
+  Le classeur d'audit exhaustif à 7 feuilles (`Rapprochement_OM_<Mois>_<Année>.xlsx`) est généré
+  et téléchargeable dans l'UI.
+- **J2 — V1 Contrôle utilisable de bout en bout** = J1 + P6 + P7 · **✅ ATTEINT** (16/09/2026).
+  Le contrôleur travaille entièrement dans l'application : filtres multi-critères, recherche,
+  audit des écarts, validation/rejet motivé des anomalies et pilotage du verrou comptable.
 - **J3 — V1 Complète** = J2 + P8 + P9 · **reste ~5 j**.
 
-> **Où en est-on.** Quatre phases sur onze sont terminées, quatre sont partielles, deux
-> n'ont pas commencé. Le chemin critique restant est court mais réel : **P4 et P5**
-> produisent le rapport d'audit, **P8** produit l'écriture comptable. Ce sont les deux
-> seuls gros blocs vierges.
+> **Où en est-on.** Huit phases sur onze sont terminées, deux sont partielles, une seule
+> n'a pas commencé (**P8** : écriture comptable Sage). Les **Jalons J1 et J2 sont atteints**.
+> Le seul grand bloc vierge restant pour clore la V1 est P8 (dès confirmation des 5 arbitrages comptables B7-B11).
 
 > **Évolution depuis la première version du plan.** L'export PNM était isolé en phase distincte,
 > bloqué faute de spécification. Les quatre échantillons Sage fournis ont levé ce blocage : le

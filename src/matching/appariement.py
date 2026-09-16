@@ -107,7 +107,9 @@ class ResultatRapprochement:
 
     @property
     def total_commissions(self) -> Decimal:
-        return sum((t.commission for a in self.appariements for t in a.transactions), ZERO)
+        commissions_app = sum((t.commission for a in self.appariements for t in a.transactions), ZERO)
+        commissions_recette = sum((t.commission for t in self.recette_du_jour), ZERO)
+        return commissions_app + commissions_recette
 
     # --- statuts ---------------------------------------------------------------
 

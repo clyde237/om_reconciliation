@@ -14,10 +14,13 @@ import streamlit as st
 from src.matching import ResultatRapprochement
 from src.readers import LectureJournal, LectureOM
 
+from src.analysis.validation import JournalDecisions
+
 CLE_JOURNAL = "lecture_journal"
 CLE_RELEVE = "lecture_releve"
 CLE_RESULTAT = "resultat_rapprochement"
 CLE_ERREUR = "erreur_import"
+CLE_DECISIONS = "journal_decisions"
 
 
 @contextmanager
@@ -39,7 +42,7 @@ def fichier_temporaire(fichier_televerse) -> Iterator[Path]:
 
 
 def reinitialiser() -> None:
-    for cle in (CLE_JOURNAL, CLE_RELEVE, CLE_RESULTAT, CLE_ERREUR):
+    for cle in (CLE_JOURNAL, CLE_RELEVE, CLE_RESULTAT, CLE_ERREUR, CLE_DECISIONS):
         st.session_state.pop(cle, None)
 
 
@@ -48,6 +51,16 @@ def enregistrer(journal: LectureJournal, releve: LectureOM, resultat: ResultatRa
     st.session_state[CLE_RELEVE] = releve
     st.session_state[CLE_RESULTAT] = resultat
     st.session_state.pop(CLE_ERREUR, None)
+    # Initialiser un journal de décisions vierge si non existant
+    if CLE_DECISIONS not in st.session_state:
+        st.session_state[CLE_DECISIONS] = JournalDecisions()
+
+
+def decisions() -> JournalDecisions:
+    """Retourne le journal des décisions partagé de la session."""
+    if CLE_DECISIONS not in st.session_state:
+        st.session_state[CLE_DECISIONS] = JournalDecisions()
+    return st.session_state[CLE_DECISIONS]
 
 
 def journal() -> Optional[LectureJournal]:

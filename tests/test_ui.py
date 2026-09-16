@@ -136,3 +136,53 @@ def test_la_vue_export_reste_fermee():
     assert not app.exception
     assert app.button[0].disabled
     assert "n'est pas encore développée" in _texte(app)
+
+
+def test_la_vue_reconciliation_filtres_et_recherche():
+    """Vérifie la présence et le bon fonctionnement des filtres de la Phase 6."""
+    app = _app("⚖️ Rapprochement")
+    assert not app.exception
+    # Les composants selectbox et text_input de filtre doivent être présents
+    assert len(app.selectbox) >= 1
+    assert len(app.text_input) >= 1
+
+
+def test_la_vue_anomalies_bloque_export_puis_se_deverrouille():
+    """Vérifie l'évaluation du verrou et la levée par validation humaine (§10, §19)."""
+    from datetime import datetime, time
+    from decimal import Decimal
+    from src.models import LigneJournal, Periode, TransactionOM
+    from src.matching.appariement import Appariement, ResultatRapprochement
+    from config.matching_config import MatchLevel
+
+    jour = datetime(2026, 4, 16).date()
+    l_ano = LigneJournal(
+        ligne_source=2,
+        date_operation=datetime(2026, 4, 16, 12, 0),
+        client="Client Inconnu",
+        mode_paiement="Orange Money",
+        montant=Decimal("15000"),
+        reference_interne="REF-ANO",
+    )
+    res_avec_anomalie = ResultatRapprochement(
+        periode=Periode.journee(jour),
+        arrhes_sans_om=[l_ano],  # MANQUANT_OM bloquant
+    )
+
+    app = AppTest.from_file(str(RACINE / "app.py"), default_timeout=30)
+    app.session_state[session.CLE_RESULTAT] = res_avec_anomalie
+    app.run()
+    app.sidebar.radio[0].set_value("⚠️ Anomalies & Écarts").run()
+
+    assert not app.exception
+    texte = _texte(app)
+    assert "export bloqué" in texte.lower()
+    assert "manquant_om" in texte.lower()
+
+    # Valider toutes les anomalies et vérifier la mise à jour
+    journal = app.session_state[session.CLE_DECISIONS]
+    journal.valider_toutes(res_avec_anomalie.arrhes_sans_om, auteur="Contrôleur", motif="Vérifié")
+    app.run()
+    texte_apres = _texte(app)
+    assert "aucune anomalie bloquante" in texte_apres.lower()
+

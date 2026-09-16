@@ -86,3 +86,15 @@ def render_dashboard():
             f"{nombre} {statut.value}" for statut, nombre in resultat.anomalies_bloquantes.items()
         )
         st.error(f"Export comptable bloqué — {detail}. À traiter dans **Anomalies & Écarts**.")
+
+    from src.reports.excel_report import ExcelReportGenerator
+    st.markdown("---")
+    st.subheader("📑 Livrable d'Audit")
+    st.download_button(
+        label="📥 Télécharger le rapport d'audit complet (.xlsx)",
+        data=ExcelReportGenerator().generate_bytes(resultat),
+        file_name=f"Rapprochement_OM_{resultat.periode.libelle.replace(' ', '_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        help="Génère le classeur Excel à 7 feuilles conforme au cahier des charges.",
+    )
