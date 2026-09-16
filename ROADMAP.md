@@ -16,7 +16,7 @@
 | **P0** | Socle technique & cadrage | — | 1 j | `pytest` vert, `streamlit run app.py` démarre |
 | **P1** | Noyau de normalisation (Decimal, dates, textes) | P0 | 2 j | `normalize_amount("90 200,00 FCFA") -> Decimal("90200.00")` |
 | **P2** | Lecture & mapping des colonnes | P1 | 3–4 j | Les 177 transactions OM et les lignes du journal extraites proprement |
-| **P3** | Moteur de rapprochement | P2 | 4 j | Le 16/04/2026 rapproché 3/3 sans ambiguïté |
+| **P3** | Moteur de rapprochement | P2 | 4 j | La journée du 16/04/2026 rapprochée 3/3 |
 | **P4** | Analyse, statuts & observations | P3 | 3 j | Les 9 statuts + compteurs globaux du §8 |
 | **P5** | Rapport Excel d'audit (7 feuilles) | P4 | 2–3 j | `Rapprochement_OM_Avril_2026.xlsx` |
 | **P6** | UI Streamlit du contrôle (étapes 1→3) | P5 | 3 j | Parcours import → résultats → anomalies |
@@ -116,6 +116,23 @@ champ commun. Donc :
 concentrer son effort là, et les deux niveaux sans objet restent implémentés pour les futures
 sources (MTN MoMo, banque) sans être optimisés.
 
+### Le journal porte la période, le relevé est filtré dessus
+
+Le journal des arrhes s'exporte **par journée**. La période de contrôle se lit donc dans le
+journal — cellule `C1`, `Période du 16/04/2026 au 16/04/2026` — et le relevé mensuel est
+restreint à cette même journée avant tout rapprochement. Un même relevé sert ainsi plusieurs
+contrôles successifs, un par journée déposée.
+
+Trois conséquences :
+
+- **P2** ne demande pas la période à l'utilisateur, il la lit dans le journal et filtre le
+  relevé dessus ;
+- **P3** travaille sur une intersection d'une journée, ce qui borne l'ambiguïté d'appariement
+  et interdit tout appariement croisé entre dates ;
+- **P4** ne déclare `MANQUANT_JOURNAL` que pour les transactions OM **de la journée contrôlée** :
+  hors de cette journée, une transaction n'est ni manquante ni anormale, elle est hors périmètre.
+  Le cumul mensuel du §9 s'obtient en agrégeant les journées contrôlées.
+
 ### La consommation des lignes n'est pas une précaution théorique
 
 Le 16/04/2026, le relevé porte **deux encaissements de 90 200** et le journal **deux lignes de
@@ -144,10 +161,14 @@ notamment le gabarit `AVCE <NOM CLIENT> <date>` des arrhes — mais le format d'
 | B9 | **Numéro de pièce** | P8 | Les pièces (6417, 6419, 6445…) sont-elles attribuées par Sage à l'import, ou l'export doit-il les fournir ? |
 | B10 | **Longueur du libellé** | P8 | Le PNM relevé donne 25 caractères ; les écritures existantes du client vont jusqu'à 35. À vérifier sur l'installation Sage réelle. |
 | B11 | **Décimales en XAF** | P8 | Les échantillons sont en EUR à 2 décimales forcées. Sage attend-il `90200.00` ou `90200` en franc CFA ? |
-| B12 | **Journal des arrhes sur un mois complet** | P3 | L'export fourni ne couvre **qu'une journée** (16/04/2026) alors que le relevé couvre tout avril. Il faut un export d'avril entier pour valider le moteur à l'échelle réelle. |
 
-B7 à B11 sont regroupés : ils se posent tous au moment d'écrire le mapper, et une seule séance
-avec le comptable les tranche. **B12 est le plus urgent** — il conditionne la validation de P3.
+B7 à B11 se posent tous au moment d'écrire le mapper : une seule séance avec le comptable les
+tranche. Aucun d'eux ne bloque les phases P1 à P7.
+
+> **Levé le 15/09/2026 — le journal se tire par journée.** Le plan supposait qu'il fallait un
+> export du journal sur un mois complet. C'est faux : une journée déposée définit le périmètre
+> du contrôle, et le relevé mensuel est filtré sur cette journée. Ce n'est pas un manque de
+> données, c'est le mode de travail normal.
 
 ---
 
@@ -188,11 +209,13 @@ avec le comptable les tranche. **B12 est le plus urgent** — il conditionne la 
 
 ## Phase 2 — Lecture & mapping des colonnes
 
-**Objectif :** transformer deux classeurs hétérogènes en deux tables canoniques normalisées.
+**Objectif :** transformer deux classeurs hétérogènes en deux tables canoniques normalisées,
+restreintes à la journée contrôlée.
 
 - **Journal** : la table démarre en ligne 2 ; écarter sous-totaux, note de bas de page,
-  pagination et bloc « Récapitulatif ». Lire la période dans la cellule `C1`.
-  **Filtrer sur la colonne « Encaissement » = `Orange Money`.**
+  pagination et bloc « Récapitulatif ». **Lire la période dans la cellule `C1` — elle fait foi**
+  et définit le périmètre du contrôle. **Filtrer sur la colonne « Encaissement » = `Orange Money`.**
+- **Filtrage du relevé sur la période du journal**, avant tout rapprochement.
 - **Relevé** : découper les sous-relevés par compte, détecter les lignes de données par leur
   **forme** (colonne A entière, statut ∈ {Succès, Echec}), écarter soldes et totaux.
   Retenir `Merchant Payment`, écarter `C2C Transfer`, isoler les lignes de commission.
@@ -209,6 +232,7 @@ chaque ligne écartée est justifiée.
 
 **Objectif :** le cœur de l'application, recentré sur ce que les sources permettent réellement.
 
+- Rapprochement **sur la journée portée par le journal**, le relevé étant déjà filtré par P2.
 - Cascade sur le **reliquat**, avec **consommation** des lignes appariées — démontré nécessaire
   par le cas du 16/04 (deux fois 90 200 des deux côtés).
 - Priorité aux **niveaux 2 et 4** (`date + montant`, puis tolérance). Tolérance de dates
@@ -218,8 +242,8 @@ chaque ligne écartée est justifiée.
 - Détection des doublons des deux côtés.
 - **Traçabilité** : chaque appariement porte son niveau et son score.
 
-**Définition de terminé :** le 16/04/2026 est rapproché 3 sur 3, chaque appariement justifié par
-une règle nommée. Validation à l'échelle du mois dès que B12 est levé.
+**Définition de terminé :** la journée du 16/04/2026 est rapprochée 3 sur 3, chaque appariement
+justifié par une règle nommée.
 
 ---
 

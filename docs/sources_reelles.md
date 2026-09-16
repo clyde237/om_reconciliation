@@ -5,7 +5,7 @@ Fichiers analysés le 15/09/2026, copiés dans `data/input/` (**exclu de git** �
 | Fichier | Nature réelle |
 |---|---|
 | `004 RELEVE OM AVRIL 2026.xlsx` | Relevé Orange Money, avril 2026 — **4 sous-relevés concaténés** |
-| `Journal des arrhes.xlsx` | Export du journal des arrhes — **une seule journée**, le 16/04/2026 |
+| `Journal des arrhes.xlsx` | Export du journal des arrhes — **une journée**, le 16/04/2026 |
 | `OM SAGE.xlsx` | **Pas un modèle d'import.** Grand livre Sage 100c d'un compte |
 
 ---
@@ -40,8 +40,31 @@ La période se lit dans `C1` : `Période du 16/04/2026 au 16/04/2026`.
 rapprochement. Sur cet export : 3 lignes, 90 200 + 110 200 + 90 200 = 290 600, ce que confirme
 la ligne `Orange Money` du récapitulatif.
 
-> ⚠️ Cet export ne couvre qu'une journée alors que le relevé couvre le mois entier.
-> **Il faut un export du journal sur tout avril 2026** pour valider le moteur à l'échelle réelle.
+### Le journal porte la période de contrôle
+
+Le journal des arrhes **se tire par journée**. Une journée déposée définit donc le périmètre du
+contrôle : le relevé mensuel est **filtré sur cette même journée**, et le rapprochement ne
+travaille que sur cette intersection.
+
+```text
+Journal du 16/04/2026  ──► période = 16/04/2026
+                                │
+Relevé d'avril 2026 ────────────┴──► filtré sur le 16/04/2026 ──► rapprochement
+```
+
+La période se lit dans la cellule `C1` (`Période du 16/04/2026 au 16/04/2026`) : c'est elle qui
+fait foi, pas une saisie de l'utilisateur. Le relevé mensuel sert donc plusieurs contrôles
+successifs, un par journée déposée, et le cumul mensuel s'obtient en agrégeant les journées
+contrôlées.
+
+Conséquences :
+
+- l'ambiguïté d'appariement reste **confinée à une journée**, ce qui borne naturellement le
+  coût du rapprochement et le risque d'appariement croisé entre dates ;
+- une transaction OM de la journée absente du journal est un `MANQUANT_JOURNAL` **réel**, et
+  non un artefact de périmètre ;
+- les transactions OM hors de la journée contrôlée sont **hors périmètre**, ni manquantes ni
+  anormales.
 
 ---
 
@@ -108,7 +131,7 @@ et non sur le texte des en-têtes.
 
 ## 3. Confrontation des deux sources — ce que le test réel démontre
 
-Journal du 16/04/2026, lignes Orange Money, face au relevé du même jour :
+Journal du 16/04/2026, lignes Orange Money, face au relevé filtré sur le même jour :
 
 | Journal (heure de saisie) | Montant | Relevé OM (heure réelle) | Référence OM | Écart de temps |
 |---|---:|---|---|---|
