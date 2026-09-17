@@ -1,5 +1,19 @@
-"""Lecteurs de données sources."""
+"""Lecture des fichiers sources."""
 
-from .journal_reader import JournalReader
-from .om_reader import OMReader
+from .encaissements_reader import (
+    EncaissementsReader,
+    LectureEncaissements,
+    MouvementEncaissement,
+)
+from .om_reader import CompteOM, LectureOM, OMReader
 from .sage_template_reader import SageTemplateReader
+
+__all__ = [
+    "CompteOM",
+    "EncaissementsReader",
+    "LectureEncaissements",
+    "MouvementEncaissement",
+    "LectureOM",
+    "OMReader",
+    "SageTemplateReader",
+]

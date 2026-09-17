@@ -1,42 +1,43 @@
-# OM Reconciliation (Rapprochement Orange Money & Journal des Arrhes)
+# OM Reconciliation (Rapprochement Orange Money & Journal des Encaissements)
 
-Plateforme automatisée de rapprochement financier entre les relevés **Orange Money (OM)** et le **Journal des Arrhes / Acomptes** avec génération d'écritures d'intégration comptable pour **Sage 100**.
+Plateforme automatisée de rapprochement financier entre les relevés **Orange Money (OM)** mensuels et les **Journaux des Encaissements** quotidiens (arrhes de réservation et factures directes des points de vente), avec génération d'audit Excel 7 feuilles et écritures d'intégration comptable pour **Sage 100**.
 
 ---
 
 ## 📌 Fonctionnalités Clés
 
-1. **Ingestion multi-formats :**
-   - Importation des relevés Orange Money (Excel / CSV).
-   - Importation du Journal des Arrhes comptable (Excel / CSV).
-   - Modèle de gabarit Sage personnalisable.
+1. **Ingestion multi-sources & multi-journaux :**
+   - Importation du relevé mensuel Orange Money multi-comptes (Kotibé, Baleng, Réception, Agrégateur).
+   - Téléversement d'un ou plusieurs Journaux des Encaissements quotidiens avec ventilation par mode de paiement.
+   - Contrôle automatique d'intégrité de lecture par rapport aux totaux déclarés dans le bloc « RECAPITULATIF » du journal.
 
 2. **Moteur de normalisation :**
    - Standardisation des dates (formats hétérogènes, dates valeurs vs opérations).
-   - Nettoyage des montants (devises, espaces insécables, séparateurs).
-   - Extraction et homogénéisation des références de transactions (ID OM, références arrhes).
-   - Normalisation textuelle (accents, libellés, noms de clients).
+   - Nettoyage des montants (`Decimal` strict, devises, espaces insécables, séparateurs).
+   - Extraction et homogénéisation des références (réservations, factures Kotibé/Baleng, IDs de transaction OM).
+   - Détection de la nature comptable (`est_arrhe` : arrhes vs factures directes).
 
-3. **Moteur de réconciliation intelligent (Matching) :**
-   - Rapprochement exact (ID transaction + montant exact).
-   - Rapprochement flou (libellés similaires, fenêtres de dates glissantes).
-   - Détection des transactions orphelines (omissions OM ou journal).
-   - Détection avancée des doublons (multiples débits/crédits pour une même référence).
+3. **Moteur de réconciliation intelligent (Matching en cascade) :**
+   - Rapprochement exact (ID transaction / montant exact).
+   - Rapprochement sur date et montant.
+   - Combinaison de lignes (ex. règlement OM unique pour plusieurs factures directes).
+   - Rapprochement flou multi-critères.
+   - Détection de doublons (journal et relevé).
+   - Qualification des flux orphelins (recette du jour non inscrite aux encaissements).
 
-4. **Analyse & Détection d'anomalies :**
-   - Écarts de montants sur transactions identifiées.
-   - Retards de comptabilisation.
-   - Synthèse mensuelle et indicateurs de couverture.
+4. **Contrôle mensuel de campagne :**
+   - Détection des journées du relevé non couvertes (absence de journal déposé).
+   - Détection des journées déposées en doublon.
+   - Taux de couverture du relevé et taux de rapprochement consolidé.
 
-5. **Génération & Export Sage :**
-   - Formats exportables : **PNM** (paramétrable Sage), **TXT** structuré, et **Excel**.
-   - Affectation automatique des comptes généraux (512xxx Trésorerie, 4191xx Arrhes/Acomptes).
+5. **Livrables d'audit & Validation :**
+   - Rapport Excel d'audit complet à 7 feuilles conforme au cahier des charges §9.
+   - Support du rapport mensuel consolidé et du rapport journalier.
+   - Workflow de validation humaine motivée pour levée du verrou comptable.
 
-6. **Interface Utilisateur Moderne (Streamlit) :**
-   - Tableau de bord synthétique avec KPI financiers.
-   - Interface de chargement des fichiers.
-   - Grilles de rapprochement interactives avec validation manuelle.
-   - Espace dédié à l'audit des anomalies et téléchargement des exports.
+6. **Génération & Export Sage 100 :**
+   - Spécification et format d'export **PNM** (validé sur échantillons Sage réels).
+   - Ventilation automatique : Arrhes individuelles (41910000), Factures directes (41110000), Recette du jour (70600000), Trésorerie OM (55300000 / MOMO).
 
 ---
 
@@ -45,40 +46,42 @@ Plateforme automatisée de rapprochement financier entre les relevés **Orange M
 ```text
 om_reconciliation/
 │
-├── app.py                      # Point d'entrée principal de l'application
+├── app.py                      # Point d'entrée Streamlit
 ├── requirements.txt            # Dépendances Python
 ├── README.md                   # Documentation du projet
+├── ROADMAP.md                  # Suivi des phases et jalons
 ├── .gitignore                  # Fichiers ignorés par Git
 ├── .env.example                # Modèle de variables d'environnement
 │
 ├── config/                     # Configurations globales
 │   ├── __init__.py
-│   ├── settings.py             # Paramètres système et chemins
-│   ├── sage_config.py          # Configuration comptable Sage
-│   └── matching_config.py      # Seuils et paramètres de réconciliation
+│   ├── settings.py             # Paramètres système, colonnes et chemins
+│   ├── sage_config.py          # Configuration comptable Sage (disposition PNM)
+│   └── matching_config.py      # Seuils, cascade et statuts de rapprochement
 │
-├── data/                       # Stockage des données
+├── data/                       # Données
 │   ├── input/                  # Fichiers sources à réconcilier
-│   │   ├── journal_arrhes/     # Fichiers du journal comptable des arrhes
-│   │   └── releves_om/         # Extraits et relevés Orange Money
+│   │   ├── journal_encaissements/ # Journaux quotidiens des encaissements
+│   │   └── releves_om/         # Relevés Orange Money mensuels
 │   ├── output/                 # Rapports et fichiers exports générés
-│   └── templates/              # Gabarits (ex: om_sage_template.xlsx)
+│   └── templates/              # Gabarits et échantillons PNM
 │
 ├── src/                        # Coeur logique métier
-│   ├── readers/                # Parseurs de fichiers (Excel, CSV, templates)
-│   ├── normalization/          # Nettoyage et standardisation des données
-│   ├── matching/               # Algorithmes de matching (exact, flou, doublons)
-│   ├── analysis/               # Moteur d'audit, détection d'écarts et synthèses
-│   ├── sage/                   # Générateurs d'écritures Sage (TXT, PNM, XLSX)
-│   ├── reports/                # Conception des rapports financiers Excel détaillés
-│   └── utils/                  # Fonctions transverses (logger, validateurs, helpers)
+│   ├── readers/                # Parseurs (EncaissementsReader, OMReader)
+│   ├── normalization/          # Nettoyage et standardisation (dates, montants, texte)
+│   ├── matching/               # Cascade de matching et campagne mensuelle
+│   ├── analysis/               # Synthèse mensuelle, anomalies, doublons, validation
+│   ├── sage/                   # Exportateurs Sage (PNM, TXT, XLSX)
+│   ├── reports/                # Générateur Excel d'audit 7 feuilles (OpenPyXL)
+│   └── utils/                  # Fonctions transverses (logger, helpers)
 │
 ├── ui/                         # Interface graphique (Streamlit)
-│   ├── dashboard.py            # Vue KPIs & graphiques
-│   ├── upload.py               # Vue de téléversement des fichiers
-│   ├── reconciliation_view.py  # Vue détaillée du rapprochement
-│   ├── anomalies_view.py       # Vue d'analyse des anomalies & écarts
-│   ├── sage_export_view.py     # Vue de génération et export Sage
+│   ├── dashboard.py            # Vue KPIs, bandeau mensuel & téléchargement Excel
+│   ├── upload.py               # Vue de téléversement multi-journaux
+│   ├── reconciliation_view.py  # Vue détaillée du rapprochement avec filtres
+│   ├── anomalies_view.py       # Vue d'audit, décisions et verrou d'export
+│   ├── sage_export_view.py     # Vue d'export comptable Sage
+│   ├── session.py              # Gestion d'état de session Streamlit
 │   └── components.py           # Composants graphiques réutilisables
 │
 ├── tests/                      # Suite de tests unitaires (pytest)

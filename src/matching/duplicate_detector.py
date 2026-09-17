@@ -1,14 +1,32 @@
-"""Détection des transactions dupliquées."""
+"""Détection des transactions enregistrées plusieurs fois."""
 
-from typing import List
-import pandas as pd
+from collections import defaultdict
+from typing import Iterable
+
+from src.models import LigneJournal, TransactionOM
 
 
-def detect_duplicates(df: pd.DataFrame, subset_cols: List[str]) -> pd.DataFrame:
-    """Détecte les doublons selon un ensemble de colonnes clés (ex: référence, montant, date)."""
-    if df.empty:
-        return pd.DataFrame()
-    existing_cols = [c for c in subset_cols if c in df.columns]
-    if not existing_cols:
-        return pd.DataFrame()
-    return df[df.duplicated(subset=existing_cols, keep=False)]
+def doublons_journal(lignes: Iterable[LigneJournal]) -> list[LigneJournal]:
+    """Même jour, même montant, même client.
+
+    Le client fait partie de la clé, et il le faut : deux arrhes de 90 200 le même
+    jour pour deux clients différents sont un cas réel et parfaitement normal.
+    """
+    groupes: dict[tuple, list[LigneJournal]] = defaultdict(list)
+    for ligne in lignes:
+        groupes[(ligne.jour, ligne.montant, ligne.cle_client)].append(ligne)
+    return [ligne for groupe in groupes.values() if len(groupe) > 1 for ligne in groupe]
+
+
+def doublons_om(transactions: Iterable[TransactionOM]) -> list[TransactionOM]:
+    """Même référence Orange Money.
+
+    La référence est unique par transaction : deux lignes qui la partagent sont le
+    même encaissement compté deux fois, pas deux encaissements identiques.
+    """
+    groupes: dict[str, list[TransactionOM]] = defaultdict(list)
+    for transaction in transactions:
+        cle = transaction.cle_reference
+        if cle:
+            groupes[cle].append(transaction)
+    return [t for groupe in groupes.values() if len(groupe) > 1 for t in groupe]
