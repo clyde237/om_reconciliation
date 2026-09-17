@@ -115,12 +115,9 @@ def observer_arrhe_sans_om(ligne: LigneJournal) -> str:
 
 
 def observer_recette(transaction: TransactionOM) -> str:
-    """Le résidu n'est pas un manquant : c'est la recette ordinaire du jour."""
+    """Le résidu n'est pas un manquant : paiement présent sur le relevé mais absent du journal."""
     op = getattr(transaction, "operateur", "Orange Money")
-    return (
-        f"Encaissement {op} sans arrhe correspondante : recette du jour, "
-        "à comptabiliser dans l'écriture agrégée."
-    )
+    return f"Paiement {op} reçu sur le relevé mais absent du journal des encaissements."
 
 
 def observer_transaction_sans_journal(transaction: TransactionOM) -> str:

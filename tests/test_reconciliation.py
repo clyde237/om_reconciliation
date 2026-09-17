@@ -37,6 +37,7 @@ def creer_om(
     ref: str = "MP260416.0001",
     compte: str = "656009773",
     commission: str = "100",
+    operateur: str = "Orange Money",
 ) -> TransactionOM:
     return TransactionOM(
         numero=1,
@@ -49,6 +50,7 @@ def creer_om(
         correspondant="690000000",
         credit=Decimal(montant),
         commission=Decimal(commission),
+        operateur=operateur,
     )
 
 
@@ -139,6 +141,17 @@ def test_construire_table():
     assert "Correspondance exacte trouvée" in ligne.observation
     assert ligne.compte_om == "656009773"
     assert not ligne.est_bloquante
+
+
+def test_observer_recette_texte():
+    """Vérifie le texte de l'observation pour une transaction en recette du jour."""
+    t_om = creer_om("50000", "MP001")
+    t_momo = creer_om("30000", "MOMO001", operateur="MTN MoMo")
+
+    table = construire_table(ResultatRapprochement(periode=PERIODE, recette_du_jour=[t_om, t_momo]))
+    assert len(table) == 2
+    assert table[0].observation == "Paiement Orange Money reçu sur le relevé mais absent du journal des encaissements."
+    assert table[1].observation == "Paiement MTN MoMo reçu sur le relevé mais absent du journal des encaissements."
 
 
 def test_synthese_mensuelle_et_ventilation():
