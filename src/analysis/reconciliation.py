@@ -19,6 +19,7 @@ from src.analysis.observations import (
 )
 from src.matching.appariement import ResultatRapprochement
 from src.normalization.amounts import ZERO
+from src.normalization.text import normalize_key
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class LigneRapprochement:
     compte_om: str = ""
     ligne_source: Optional[int] = None
     commission: Decimal = ZERO
+    operateur: str = ""
 
     @property
     def est_bloquante(self) -> bool:
@@ -50,6 +52,17 @@ def construire_table(resultat: ResultatRapprochement) -> list[LigneRapprochement
 
     for appariement in resultat.appariements:
         premiere = appariement.lignes[0]
+        mode_j = premiere.mode_paiement
+        mode_t = (
+            getattr(appariement.transactions[0], "operateur", "Orange Money")
+            if appariement.transactions
+            else "Orange Money"
+        )
+        if normalize_key(mode_j) == normalize_key(mode_t):
+            op_label = mode_j
+        else:
+            op_label = f"{mode_j} ➔ {mode_t}"
+
         lignes.append(
             LigneRapprochement(
                 date_operation=premiere.jour,
@@ -62,9 +75,10 @@ def construire_table(resultat: ResultatRapprochement) -> list[LigneRapprochement
                 observation=observer_appariement(appariement),
                 niveau=int(appariement.niveau),
                 score=appariement.score,
-                compte_om=appariement.transactions[0].compte_agent,
+                compte_om=appariement.transactions[0].compte_agent if appariement.transactions else "",
                 ligne_source=premiere.ligne_source,
                 commission=sum((t.commission for t in appariement.transactions), ZERO),
+                operateur=op_label,
             )
         )
 
@@ -80,15 +94,18 @@ def construire_table(resultat: ResultatRapprochement) -> list[LigneRapprochement
                 statut=MatchStatus.MANQUANT_OM,
                 observation=observer_arrhe_sans_om(ligne),
                 ligne_source=ligne.ligne_source,
+                operateur=ligne.mode_paiement or "Orange Money",
             )
         )
 
     for transaction in resultat.recette_du_jour:
+        op_label = getattr(transaction, "operateur", "Orange Money")
+        client_nom = transaction.libelle_compte or transaction.correspondant
         lignes.append(
             LigneRapprochement(
                 date_operation=transaction.date_operation,
                 reference=transaction.reference,
-                client=transaction.correspondant,
+                client=client_nom,
                 montant_journal=ZERO,
                 montant_om=transaction.montant,
                 ecart=-transaction.montant,
@@ -96,21 +113,25 @@ def construire_table(resultat: ResultatRapprochement) -> list[LigneRapprochement
                 observation=observer_recette(transaction),
                 compte_om=transaction.compte_agent,
                 commission=transaction.commission,
+                operateur=op_label,
             )
         )
 
     for transaction in resultat.transactions_invalides:
+        op_label = getattr(transaction, "operateur", "Orange Money")
+        client_nom = transaction.libelle_compte or transaction.correspondant
         lignes.append(
             LigneRapprochement(
                 date_operation=transaction.date_operation,
                 reference=transaction.reference,
-                client=transaction.correspondant,
+                client=client_nom,
                 montant_journal=ZERO,
                 montant_om=ZERO,
                 ecart=ZERO,
                 statut=MatchStatus.STATUT_OM_INVALIDE,
                 observation=observer_invalide(transaction),
                 compte_om=transaction.compte_agent,
+                operateur=op_label,
             )
         )
 

@@ -56,6 +56,12 @@ class Appariement:
             return MatchStatus.CORRESPONDANCE_GROUPEE
         if self.niveau >= PROBABLE_FROM_LEVEL:
             return MatchStatus.CORRESPONDANCE_PROBABLE
+        if self.lignes and self.transactions:
+            from src.normalization.text import normalize_key
+            mode_j = normalize_key(self.lignes[0].mode_paiement)
+            mode_t = normalize_key(getattr(self.transactions[0], "operateur", "Orange Money"))
+            if mode_j and mode_t and mode_j != mode_t:
+                return MatchStatus.CORRESPONDANCE_PROBABLE
         return MatchStatus.CONFORME
 
     @property

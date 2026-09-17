@@ -136,9 +136,10 @@ class ExcelReportGenerator:
         headers = [
             "Date",
             "Client",
-            "Référence OM",
+            "Opérateur",
+            "Référence OM/MoMo",
             "Montant journal",
-            "Montant OM",
+            "Montant Relevé",
             "Statut",
             "Observation",
         ]
@@ -169,8 +170,10 @@ class ExcelReportGenerator:
                 MatchStatus.RECETTE_JOUR,
                 MatchStatus.STATUT_OM_INVALIDE,
             )
+            est_croisement = "➔" in (ligne.operateur or "") or "->" in (ligne.operateur or "")
             est_correct = (
                 not est_non_retrouve
+                and not est_croisement
                 and (ligne.ecart == ZERO or (ligne.montant_journal == ligne.montant_om and ligne.montant_journal > ZERO))
                 and ligne.statut in (
                     MatchStatus.CONFORME,
@@ -182,85 +185,92 @@ class ExcelReportGenerator:
             date_str = ligne.date_operation.strftime("%d/%m/%Y") if ligne.date_operation else ""
             c1 = ws.cell(row=curr_row, column=1, value=date_str)
             c2 = ws.cell(row=curr_row, column=2, value=ligne.client or "")
-            c3 = ws.cell(row=curr_row, column=3, value=ligne.reference or "")
-            c4 = ws.cell(row=curr_row, column=4, value=float(ligne.montant_journal))
-            c5 = ws.cell(row=curr_row, column=5, value=float(ligne.montant_om))
-            c6 = ws.cell(row=curr_row, column=6, value=ligne.statut.value)
-            c7 = ws.cell(row=curr_row, column=7, value=ligne.observation or "")
+            c3 = ws.cell(row=curr_row, column=3, value=ligne.operateur or "")
+            c4 = ws.cell(row=curr_row, column=4, value=ligne.reference or "")
+            c5 = ws.cell(row=curr_row, column=5, value=float(ligne.montant_journal))
+            c6 = ws.cell(row=curr_row, column=6, value=float(ligne.montant_om))
+            c7 = ws.cell(row=curr_row, column=7, value=ligne.statut.value)
+            c8 = ws.cell(row=curr_row, column=8, value=ligne.observation or "")
 
-            c4.number_format = FORMAT_MONTANT_FCFA
             c5.number_format = FORMAT_MONTANT_FCFA
+            c6.number_format = FORMAT_MONTANT_FCFA
 
             c1.alignment = ALIGN_CENTER
             c2.alignment = ALIGN_LEFT
             c3.alignment = ALIGN_CENTER
-            c4.alignment = ALIGN_RIGHT
+            c4.alignment = ALIGN_CENTER
             c5.alignment = ALIGN_RIGHT
-            c6.alignment = ALIGN_CENTER
-            c7.alignment = ALIGN_LEFT
+            c6.alignment = ALIGN_RIGHT
+            c7.alignment = ALIGN_CENTER
+            c8.alignment = ALIGN_LEFT
 
-            for cell in (c1, c2, c3, c4, c5, c6, c7):
+            for cell in (c1, c2, c3, c4, c5, c6, c7, c8):
                 cell.border = BORDER_THIN
 
             if est_correct:
-                for cell in (c1, c2, c3, c4, c5, c7):
+                for cell in (c1, c2, c3, c4, c5, c6, c8):
                     cell.fill = fill_green
                     cell.font = font_green
-                c6.fill = fill_green
-                c6.font = font_green_bold
+                c7.fill = fill_green
+                c7.font = font_green_bold
             elif est_non_retrouve:
-                for cell in (c1, c2, c3, c4, c5, c7):
+                for cell in (c1, c2, c3, c4, c5, c6, c8):
                     cell.fill = fill_red
                     cell.font = font_red
-                c6.fill = fill_red
-                c6.font = font_red_bold
+                c7.fill = fill_red
+                c7.font = font_red_bold
             else:
-                # Ligne problématique à vérifier
-                for cell in (c1, c2, c3, c4, c5, c6, c7):
+                # Ligne problématique à vérifier ou croisement d'opérateur
+                for cell in (c1, c2, c3, c4, c5, c6, c7, c8):
                     cell.fill = fill_problem_row
                     cell.font = font_problem_row
 
                 # Statut en surbrillance jaune
-                c6.fill = fill_problem_cell
-                c6.font = font_problem_cell
+                c7.fill = fill_problem_cell
+                c7.font = font_problem_cell
 
-                # Écart de montant : cellules montants en jaune
-                if ligne.montant_journal != ligne.montant_om:
-                    c4.fill = fill_problem_cell
-                    c4.font = font_problem_cell
-                    c5.fill = fill_problem_cell
-                    c5.font = font_problem_cell
-
-                # Doublon : référence en jaune
-                if ligne.statut == MatchStatus.DOUBLON:
+                # Croisement d'opérateur : colonne Opérateur en surbrillance jaune
+                if est_croisement:
                     c3.fill = fill_problem_cell
                     c3.font = font_problem_cell
 
+                # Écart de montant : cellules montants en jaune
+                if ligne.montant_journal != ligne.montant_om:
+                    c5.fill = fill_problem_cell
+                    c5.font = font_problem_cell
+                    c6.fill = fill_problem_cell
+                    c6.font = font_problem_cell
+
+                # Doublon : référence en jaune
+                if ligne.statut == MatchStatus.DOUBLON:
+                    c4.fill = fill_problem_cell
+                    c4.font = font_problem_cell
+
                 # À contrôler : observation en jaune
                 if ligne.statut == MatchStatus.A_CONTROLER:
-                    c7.fill = fill_problem_cell
-                    c7.font = font_problem_cell
+                    c8.fill = fill_problem_cell
+                    c8.font = font_problem_cell
 
             curr_row += 1
 
         if lignes:
             ws.cell(row=curr_row, column=1, value="TOTAL")
-            ws.cell(row=curr_row, column=4, value=f"=SUM(D2:D{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
             ws.cell(row=curr_row, column=5, value=f"=SUM(E2:E{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
+            ws.cell(row=curr_row, column=6, value=f"=SUM(F2:F{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
 
-            for c in range(1, 8):
+            for c in range(1, 9):
                 cell = ws.cell(row=curr_row, column=c)
                 cell.font = FONT_DATA_BOLD
                 cell.fill = FILL_TOTAL
                 cell.border = BORDER_TOP_BOTTOM_DOUBLE
-                if c in (4, 5):
+                if c in (5, 6):
                     cell.alignment = ALIGN_RIGHT
                 elif c == 2:
                     cell.alignment = ALIGN_LEFT
                 else:
                     cell.alignment = ALIGN_CENTER
 
-        ws.auto_filter.ref = f"A1:G{max(curr_row, 2)}"
+        ws.auto_filter.ref = f"A1:H{max(curr_row, 2)}"
         ajuster_largeurs_colonnes(ws)
 
         tampon = io.BytesIO()

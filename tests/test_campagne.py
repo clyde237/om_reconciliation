@@ -253,3 +253,168 @@ def test_decalage_date_hors_tolerance_reste_non_rapproche(tmp_path):
     assert len(jour_05.arrhes_sans_om) == 1
 
 
+def test_rapprochement_combine_om_momo_meme_jour(tmp_path):
+    """Contrôle simultané : une ligne OM et une ligne MoMo le même jour."""
+    from openpyxl import Workbook
+    from src.models import LotImport, Periode, TransactionOM, MODE_MTN_MOMO, MODE_ORANGE_MONEY
+    from src.readers.om_reader import LectureOM
+    from config.matching_config import MatchStatus
+
+    # Journal avec 1 flux OM et 1 flux MoMo
+    chemin_j = tmp_path / "encaissement_15-05-2026.xlsx"
+    wb_j = Workbook()
+    ws_j = wb_j.active
+    ws_j["B1"] = "Journal des encaissements\nPériode du 15/05/2026 au 15/05/2026\nHOTEL EXEMPLE SA"
+    ws_j.append([])
+    ws_j.append(["Mouvement", "Total", "Orange Money", "MTN Mobile Money"])
+    ws_j.append(["Réservation N°1001 ALICE Arrhes", 25000, 25000, None])
+    ws_j.append(["Réservation N°1002 BOB Arrhes", 35000, None, 35000])
+    ws_j.append(["TOTAL PERIODE *", 60000, 25000, 35000])
+    wb_j.save(chemin_j)
+
+    # Relevé OM
+    lot_om = LotImport()
+    lot_om.retenues.append(
+        TransactionOM(
+            numero=1,
+            date_operation=date(2026, 5, 15),
+            reference="MP260515.0001.A00001",
+            service="Merchant Payment",
+            statut="Succès",
+            compte_agent="656000001",
+            credit=Decimal("25000"),
+            operateur=MODE_ORANGE_MONEY,
+        )
+    )
+    releve_om = LectureOM(lot=lot_om)
+
+    # Relevé MoMo
+    lot_momo = LotImport()
+    lot_momo.retenues.append(
+        TransactionOM(
+            numero=1,
+            date_operation=date(2026, 5, 15),
+            reference="MOMO-260515100000-1",
+            service="Payment",
+            statut="Successful",
+            compte_agent="83588336",
+            credit=Decimal("35000"),
+            libelle_compte="BOB",
+            operateur=MODE_MTN_MOMO,
+        )
+    )
+    releve_momo = LectureOM(lot=lot_momo)
+
+    lecture_j = EncaissementsReader(chemin_j).read()
+    assert len(lecture_j.mouvements) == 2
+    assert lecture_j.total_om == Decimal("25000")
+    assert lecture_j.total_momo == Decimal("35000")
+
+    resultat = ControleMensuel().run([lecture_j], releve_om, releve_momo=releve_momo)
+    jour = resultat.journees[0]
+    assert len(jour.appariements) == 2
+    assert len(jour.arrhes_sans_om) == 0
+    assert all(a.statut == MatchStatus.CONFORME for a in jour.appariements)
+
+
+def test_inversion_operateur_saisie_croisee(tmp_path):
+    """Inversion de saisie : caissier a saisi OM au lieu de MoMo."""
+    from openpyxl import Workbook
+    from src.models import LotImport, TransactionOM, MODE_MTN_MOMO, MODE_ORANGE_MONEY
+    from src.readers.om_reader import LectureOM
+    from config.matching_config import MatchStatus
+    from src.analysis.observations import observer_appariement
+
+    chemin_j = tmp_path / "encaissement_16-05-2026.xlsx"
+    wb_j = Workbook()
+    ws_j = wb_j.active
+    ws_j["B1"] = "Journal des encaissements\nPériode du 16/05/2026 au 16/05/2026\nHOTEL EXEMPLE SA"
+    ws_j.append([])
+    ws_j.append(["Mouvement", "Total", "Orange Money", "MTN Mobile Money"])
+    # Erreur de saisie : enregistré dans la colonne OM
+    ws_j.append(["Réservation N°2001 DUPONT Arrhes", 40000, 40000, None])
+    ws_j.append(["TOTAL PERIODE *", 40000, 40000, 0])
+    wb_j.save(chemin_j)
+
+    # Relevé OM vide (aucun paiement sur OM)
+    releve_om = LectureOM(lot=LotImport())
+
+    # Relevé MoMo portant le paiement réel
+    lot_momo = LotImport()
+    lot_momo.retenues.append(
+        TransactionOM(
+            numero=1,
+            date_operation=date(2026, 5, 16),
+            reference="MOMO-260516100000-1",
+            service="Payment",
+            statut="Successful",
+            compte_agent="83588336",
+            credit=Decimal("40000"),
+            libelle_compte="DUPONT",
+            operateur=MODE_MTN_MOMO,
+        )
+    )
+    releve_momo = LectureOM(lot=lot_momo)
+
+    lecture_j = EncaissementsReader(chemin_j).read()
+    resultat = ControleMensuel().run([lecture_j], releve_om, releve_momo=releve_momo)
+    jour = resultat.journees[0]
+
+    assert len(jour.appariements) == 1
+    app = jour.appariements[0]
+    # Statut probable (croisement à valider par le contrôleur)
+    assert app.statut == MatchStatus.CORRESPONDANCE_PROBABLE
+    obs = observer_appariement(app)
+    assert "Croisement d'opérateur" in obs
+    assert "Orange Money" in obs
+    assert "MTN Mobile Money" in obs
+
+
+def test_inversion_operateur_avec_decalage_date(tmp_path):
+    """Inversion d'opérateur avec décalage de date (saisi MoMo le 17, encaissé OM le 19)."""
+    from openpyxl import Workbook
+    from src.models import LotImport, TransactionOM, MODE_MTN_MOMO, MODE_ORANGE_MONEY
+    from src.readers.om_reader import LectureOM
+    from config.matching_config import MatchStatus
+    from src.analysis.observations import observer_appariement
+
+    chemin_j = tmp_path / "encaissement_17-05-2026.xlsx"
+    wb_j = Workbook()
+    ws_j = wb_j.active
+    ws_j["B1"] = "Journal des encaissements\nPériode du 17/05/2026 au 17/05/2026\nHOTEL EXEMPLE SA"
+    ws_j.append([])
+    ws_j.append(["Mouvement", "Total", "Orange Money", "MTN Mobile Money"])
+    ws_j.append(["Réservation N°3001 Arrhes", 60000, None, 60000])
+    ws_j.append(["TOTAL PERIODE *", 60000, 0, 60000])
+    wb_j.save(chemin_j)
+
+    # Relevé OM avec encaissement le 19/05 (décalage de 2 jours)
+    lot_om = LotImport()
+    lot_om.retenues.append(
+        TransactionOM(
+            numero=1,
+            date_operation=date(2026, 5, 19),
+            reference="MP260519.0001.A00001",
+            service="Merchant Payment",
+            statut="Succès",
+            compte_agent="656000001",
+            credit=Decimal("60000"),
+            operateur=MODE_ORANGE_MONEY,
+        )
+    )
+    releve_om = LectureOM(lot=lot_om)
+    releve_momo = LectureOM(lot=LotImport())
+
+    lecture_j = EncaissementsReader(chemin_j).read()
+    resultat = ControleMensuel().run([lecture_j], releve_om, releve_momo=releve_momo)
+    jour = resultat.journees[0]
+
+    assert len(jour.appariements) == 1
+    app = jour.appariements[0]
+    assert app.statut == MatchStatus.CORRESPONDANCE_PROBABLE
+    obs = observer_appariement(app)
+    assert "Croisement d'opérateur" in obs
+    assert "décalage de 2 jours" in obs
+
+
+

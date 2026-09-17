@@ -20,9 +20,18 @@ def render_reconciliation_view():
     session.selecteur_de_journee("journee_rapprochement", autoriser_toutes=True)
     resultat = session.resultat()
 
-    # --- Barre de filtres multi-critères (Phase 6) ---
-    col_f1, col_f2 = st.columns([1, 2])
+    # --- Barre de filtres multi-critères (Phase 6 & MoMo) ---
+    from src.normalization.text import normalize_key
+
+    col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
     with col_f1:
+        filtre_operateur = st.selectbox(
+            "Filtrer par opérateur :",
+            ["Tous les opérateurs", "Orange Money", "MTN Mobile Money"],
+            key="rec_filtre_operateur",
+        )
+
+    with col_f2:
         comptes_om = ["Tous les comptes"] + sorted(
             {
                 t.compte_agent
@@ -32,9 +41,9 @@ def render_reconciliation_view():
             }
             | {t.compte_agent for t in resultat.recette_du_jour if t.compte_agent}
         )
-        filtre_compte = st.selectbox("Filtrer par point de vente / compte OM :", comptes_om, key="rec_filtre_compte")
+        filtre_compte = st.selectbox("Point de vente / compte :", comptes_om, key="rec_filtre_compte")
 
-    with col_f2:
+    with col_f3:
         recherche_texte = st.text_input(
             "🔍 Recherche rapide (client, référence, montant...) :",
             placeholder="Tapez un nom, numéro de téléphone, référence...",
@@ -42,6 +51,11 @@ def render_reconciliation_view():
         )
 
     q = recherche_texte.lower().strip() if recherche_texte else ""
+
+    def _match_op(demande: str, element: str) -> bool:
+        if demande == "Tous les opérateurs":
+            return True
+        return normalize_key(demande) in normalize_key(element)
 
     # Filtrage des appariements
     appariements_affiches = []
@@ -53,13 +67,19 @@ def render_reconciliation_view():
         if not compte_match:
             continue
 
+        mode_j = app.lignes[0].mode_paiement if app.lignes else ""
+        mode_t = getattr(app.transactions[0], "operateur", "Orange Money") if app.transactions else ""
+        if filtre_operateur != "Tous les opérateurs":
+            if not (_match_op(filtre_operateur, mode_j) or _match_op(filtre_operateur, mode_t)):
+                continue
+
         if q:
             text_dans_lignes = any(
                 q in l.client.lower() or q in l.reference_interne.lower() or q in str(l.montant)
                 for l in app.lignes
             )
             text_dans_trans = any(
-                q in t.reference.lower() or q in t.correspondant.lower() or q in str(t.montant)
+                q in t.reference.lower() or q in t.correspondant.lower() or q in str(t.montant) or q in t.libelle_compte.lower()
                 for t in app.transactions
             )
             if not (text_dans_lignes or text_dans_trans):
@@ -71,13 +91,19 @@ def render_reconciliation_view():
     for t in resultat.recette_du_jour:
         if filtre_compte != "Tous les comptes" and t.compte_agent != filtre_compte:
             continue
-        if q and not (q in t.reference.lower() or q in t.correspondant.lower() or q in str(t.montant)):
+        op_t = getattr(t, "operateur", "Orange Money")
+        if not _match_op(filtre_operateur, op_t):
+            continue
+        if q and not (q in t.reference.lower() or q in t.correspondant.lower() or q in str(t.montant) or q in t.libelle_compte.lower()):
             continue
         recette_affichee.append(t)
 
     # Filtrage des arrhes sans OM
     manquants_affiches = []
     for l in resultat.arrhes_sans_om:
+        op_j = getattr(l, "mode_paiement", "Orange Money")
+        if not _match_op(filtre_operateur, op_j):
+            continue
         if q and not (q in l.client.lower() or q in l.reference_interne.lower() or q in str(l.montant)):
             continue
         manquants_affiches.append(l)
@@ -87,7 +113,7 @@ def render_reconciliation_view():
     from src.matching.appariement import ResultatRapprochement
     from src.reports import generer_excel_rapprochement_colore
 
-    est_filtre = (filtre_compte != "Tous les comptes") or bool(q)
+    est_filtre = (filtre_compte != "Tous les comptes") or (filtre_operateur != "Tous les opérateurs") or bool(q)
     if est_filtre:
         res_export = ResultatRapprochement(
             periode=resultat.periode,
@@ -128,7 +154,7 @@ def render_reconciliation_view():
             file_name=nom_fichier,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
-            help="Exporte les 7 colonnes : Date, Client, Référence OM, Montant journal, Montant OM, Statut, Observation, avec surbrillances vert / jaune / rouge.",
+            help="Exporte les 8 colonnes : Date, Client, Opérateur, Référence OM/MoMo, Montant journal, Montant Relevé, Statut, Observation, avec surbrillances vert / jaune / rouge.",
             use_container_width=True,
             disabled=total_affiches == 0,
         )
@@ -137,8 +163,8 @@ def render_reconciliation_view():
     onglet_apparies, onglet_recette, onglet_manquants = st.tabs(
         [
             f"Encaissements rapprochés ({len(resultat.appariements)})",
-            f"Flux OM orphelins ({len(resultat.recette_du_jour)})",
-            f"Journal sans flux OM ({len(resultat.arrhes_sans_om)})",
+            f"Flux relevés orphelins ({len(resultat.recette_du_jour)})",
+            f"Journal sans flux relevé ({len(resultat.arrhes_sans_om)})",
         ]
     )
 
@@ -146,28 +172,36 @@ def render_reconciliation_view():
         if not appariements_affiches:
             st.caption("Aucun encaissement rapproché ne correspond aux filtres sélectionnés.")
         else:
-            st.dataframe(
-                [
+            table_app = []
+            for appariement in appariements_affiches:
+                mj = appariement.lignes[0].mode_paiement if appariement.lignes else ""
+                mt = (
+                    getattr(appariement.transactions[0], "operateur", "Orange Money")
+                    if appariement.transactions
+                    else ""
+                )
+                op_lib = mj if normalize_key(mj) == normalize_key(mt) else f"{mj} ➔ {mt}"
+                table_app.append(
                     {
                         "Client": appariement.client,
-                        "Référence OM": appariement.references_om,
+                        "Opérateur": op_lib,
+                        "Référence": appariement.references_om,
                         "Montant journal": format_amount(appariement.montant_journal),
-                        "Montant OM": format_amount(appariement.montant_om),
+                        "Montant Relevé": format_amount(appariement.montant_om),
                         "Écart": format_amount(appariement.ecart),
                         "Statut": appariement.statut.value,
                         "Niveau": f"{int(appariement.niveau)} — {appariement.niveau.name.lower().replace('_', ' ')}",
                         "Score": f"{appariement.score:.0f}",
                     }
-                    for appariement in appariements_affiches
-                ],
+                )
+            st.dataframe(
+                table_app,
                 hide_index=True,
                 width="stretch",
             )
             st.caption(
                 "Le niveau indique la règle qui a produit la correspondance. "
-                "Sur ces sources, les niveaux 1 et 3 ne trouvent rien : le journal ne "
-                "porte aucune référence Orange Money et le relevé identifie le client "
-                "par son numéro de téléphone."
+                "Les inversions de mode de paiement (OM ➔ MoMo ou MoMo ➔ OM) sont identifiées et signalées pour validation."
             )
 
     with onglet_recette:
@@ -177,10 +211,11 @@ def render_reconciliation_view():
             st.dataframe(
                 [
                     {
+                        "Opérateur": getattr(t, "operateur", "Orange Money"),
                         "Heure": str(t.heure or ""),
                         "Référence": t.reference,
                         "Compte": t.compte_agent,
-                        "Correspondant": t.correspondant,
+                        "Client / Numéro": t.libelle_compte or t.correspondant,
                         "Montant": format_amount(t.montant),
                         "Commission": format_amount(t.commission),
                     }
@@ -192,7 +227,7 @@ def render_reconciliation_view():
             st.info(
                 f"Ces {len(resultat.recette_du_jour)} encaissement(s), "
                 f"{format_amount(resultat.total_recette_du_jour)} FCFA au total, correspondent "
-                "à des flux Orange Money du relevé non identifiés dans les journaux des encaissements "
+                "à des flux du relevé non identifiés dans les journaux des encaissements "
                 "(recette ordinaire du jour)."
             )
 
@@ -203,8 +238,9 @@ def render_reconciliation_view():
             st.dataframe(
                 [
                     {
+                        "Opérateur": getattr(ligne, "mode_paiement", "Orange Money"),
                         "Ligne": ligne.ligne_source,
-                        "Heure de saisie": ligne.date_operation.strftime("%H:%M"),
+                        "Date": ligne.date_operation.strftime("%d/%m/%Y"),
                         "Client": ligne.client,
                         "Réservation": ligne.reference_interne,
                         "Montant": format_amount(ligne.montant),
@@ -215,6 +251,6 @@ def render_reconciliation_view():
                 width="stretch",
             )
             st.warning(
-                "Encaissements enregistrés au journal sans flux Orange Money "
+                "Encaissements enregistrés au journal sans flux sur le relevé "
                 "correspondant. Statut bloquant : l'export reste fermé."
             )

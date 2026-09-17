@@ -11,12 +11,20 @@ from config.matching_config import MatchLevel, MatchStatus
 from src.matching.appariement import Appariement
 from src.models import LigneJournal, TransactionOM
 from src.normalization.amounts import format_amount
+from src.normalization.text import normalize_key
 
 DEVISE = "FCFA"
 
 
 def _jours(mot: int) -> str:
     return "d'un jour" if mot == 1 else f"de {mot} jours"
+
+
+def _nom_court_op(op: str) -> str:
+    cle = normalize_key(op)
+    if "MTN" in cle or "MOMO" in cle:
+        return "MoMo"
+    return "OM"
 
 
 def observer_appariement(appariement: Appariement) -> str:
@@ -29,15 +37,42 @@ def observer_appariement(appariement: Appariement) -> str:
             f"Le journal est {sens} au relevé."
         )
 
+    mode_j = appariement.lignes[0].mode_paiement if appariement.lignes else ""
+    mode_t = (
+        getattr(appariement.transactions[0], "operateur", "Orange Money")
+        if appariement.transactions
+        else ""
+    )
+    croisement = bool(mode_j and mode_t and normalize_key(mode_j) != normalize_key(mode_t))
+
+    decalage = _decalage_en_jours(appariement)
+    if croisement:
+        if decalage:
+            jour_j = appariement.lignes[0].jour.strftime("%d/%m/%Y") if appariement.lignes else ""
+            jour_t = (
+                appariement.transactions[0].date_operation.strftime("%d/%m/%Y")
+                if appariement.transactions and appariement.transactions[0].date_operation
+                else ""
+            )
+            return (
+                f"Croisement d'opérateur : saisi en {mode_j} au journal mais encaissé sur {mode_t} "
+                f"(décalage {_jours(decalage)}, journal : {jour_j}, relevé : {jour_t}) : à valider."
+            )
+        ref = appariement.references_om or "N/A"
+        return (
+            f"Croisement d'opérateur : saisi en {mode_j} au journal mais encaissé sur {mode_t} "
+            f"(Réf: {ref}) : à valider."
+        )
+
     if appariement.est_groupe:
         return (
             f"{len(appariement.lignes)} ligne(s) du journal regroupée(s) sur "
             f"{len(appariement.transactions)} encaissement(s) de même montant total."
         )
 
-    decalage = _decalage_en_jours(appariement)
     if decalage:
         jour_j = appariement.lignes[0].jour.strftime("%d/%m/%Y") if appariement.lignes else ""
+        nom_op = _nom_court_op(mode_t)
         jour_om = (
             appariement.transactions[0].date_operation.strftime("%d/%m/%Y")
             if appariement.transactions and appariement.transactions[0].date_operation
@@ -46,7 +81,7 @@ def observer_appariement(appariement: Appariement) -> str:
         montant = format_amount(appariement.montant_journal)
         return (
             f"Montant identique ({montant} {DEVISE}), décalage {_jours(decalage)} "
-            f"(journal : {jour_j}, OM : {jour_om}) : à valider."
+            f"(journal : {jour_j}, {nom_op} : {jour_om}) : à valider."
         )
 
     if appariement.niveau is MatchLevel.REFERENCE_MONTANT:
@@ -72,22 +107,25 @@ def _decalage_en_jours(appariement: Appariement) -> int:
 
 
 def observer_arrhe_sans_om(ligne: LigneJournal) -> str:
+    nom_op = _nom_court_op(ligne.mode_paiement) if ligne.mode_paiement else "OM"
     return (
-        "Transaction présente dans le journal mais introuvable dans le relevé OM "
+        f"Transaction présente dans le journal mais introuvable dans le relevé {nom_op} "
         f"({format_amount(ligne.montant)} {DEVISE})."
     )
 
 
 def observer_recette(transaction: TransactionOM) -> str:
     """Le résidu n'est pas un manquant : c'est la recette ordinaire du jour."""
+    op = getattr(transaction, "operateur", "Orange Money")
     return (
-        "Encaissement Orange Money sans arrhe correspondante : recette du jour, "
+        f"Encaissement {op} sans arrhe correspondante : recette du jour, "
         "à comptabiliser dans l'écriture agrégée."
     )
 
 
 def observer_transaction_sans_journal(transaction: TransactionOM) -> str:
-    return "Transaction OM présente mais aucune ligne correspondante dans le journal."
+    op = getattr(transaction, "operateur", "Orange Money")
+    return f"Transaction {op} présente mais aucune ligne correspondante dans le journal."
 
 
 def observer_doublon(occurrences: int = 2) -> str:

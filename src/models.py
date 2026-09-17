@@ -19,13 +19,15 @@ from src.normalization.text import normalize_key
 
 #: Valeur de la colonne « Encaissement » du journal qui délimite le périmètre.
 MODE_ORANGE_MONEY = "Orange Money"
+MODE_MTN_MOMO = "MTN Mobile Money"
+MODES_MOBILE_MONEY = frozenset({MODE_ORANGE_MONEY, MODE_MTN_MOMO})
 
 #: Services du relevé Orange Money.
 SERVICE_PAIEMENT_MARCHAND = "Merchant Payment"
 SERVICE_TRANSFERT_INTERNE = "C2C Transfer"
 SERVICE_COMMISSIONS = "Commissions"
 
-#: Statuts du relevé Orange Money.
+#: Statuts du relevé Orange Money / MoMo.
 STATUT_SUCCES = "Succès"
 STATUT_ECHEC = "Echec"
 
@@ -78,7 +80,7 @@ class Periode:
 
 @dataclass(frozen=True)
 class LigneJournal:
-    """Une ligne d'encaissement du journal des arrhes."""
+    """Une ligne d'encaissement du journal des arrhes ou encaissements."""
 
     ligne_source: int
     date_operation: datetime
@@ -103,13 +105,21 @@ class LigneJournal:
         return normalize_key(self.mode_paiement) == normalize_key(MODE_ORANGE_MONEY)
 
     @property
+    def est_momo(self) -> bool:
+        return normalize_key(self.mode_paiement) == normalize_key(MODE_MTN_MOMO)
+
+    @property
+    def est_mobile_money(self) -> bool:
+        return self.est_orange_money or self.est_momo
+
+    @property
     def cle_client(self) -> str:
         return normalize_key(self.client)
 
 
 @dataclass(frozen=True)
 class TransactionOM:
-    """Une transaction du relevé Orange Money."""
+    """Une transaction du relevé Orange Money ou MTN Mobile Money."""
 
     numero: int
     date_operation: date
@@ -123,6 +133,7 @@ class TransactionOM:
     credit: Decimal = ZERO
     commission: Decimal = ZERO
     libelle_compte: str = ""
+    operateur: str = MODE_ORANGE_MONEY
 
     @property
     def montant(self) -> Decimal:
@@ -131,16 +142,29 @@ class TransactionOM:
 
     @property
     def est_reussie(self) -> bool:
-        return normalize_key(self.statut) == normalize_key(STATUT_SUCCES)
+        cle = normalize_key(self.statut)
+        return cle in {
+            normalize_key(STATUT_SUCCES),
+            normalize_key("Successful"),
+            normalize_key("Success"),
+            normalize_key("Reussie"),
+        }
 
     @property
     def est_paiement_marchand(self) -> bool:
-        return normalize_key(self.service) == normalize_key(SERVICE_PAIEMENT_MARCHAND)
+        return normalize_key(self.service) in {
+            normalize_key(SERVICE_PAIEMENT_MARCHAND),
+            normalize_key("Payment"),
+            normalize_key("Paiement"),
+        }
 
     @property
     def est_transfert_interne(self) -> bool:
         """Virement entre comptes du groupe : hors périmètre du rapprochement."""
-        return normalize_key(self.service) == normalize_key(SERVICE_TRANSFERT_INTERNE)
+        return normalize_key(self.service) in {
+            normalize_key(SERVICE_TRANSFERT_INTERNE),
+            normalize_key("Adjustment"),
+        }
 
     @property
     def est_commission(self) -> bool:
@@ -149,7 +173,14 @@ class TransactionOM:
     @property
     def est_encaissement_client(self) -> bool:
         """Seules ces transactions entrent dans le rapprochement."""
-        return self.est_paiement_marchand and self.est_reussie and self.credit > ZERO
+        if not self.est_reussie or self.credit <= ZERO:
+            return False
+        if normalize_key(self.operateur) == normalize_key(MODE_MTN_MOMO):
+            return normalize_key(self.service) in {
+                normalize_key("Payment"),
+                normalize_key("Paiement"),
+            }
+        return self.est_paiement_marchand
 
     @property
     def cle_reference(self) -> str:
