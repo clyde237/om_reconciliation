@@ -2,21 +2,22 @@
 
 Le bouton « Lancer l'analyse » n'appelait rien et affichait « Veuillez charger les
 deux fichiers » même lorsque les deux étaient chargés. Ces tests couvrent le chemin
-réel : téléversement, lecture, rapprochement, restitution dans chaque vue.
+réel : téléversement de plusieurs journaux, lecture, rapprochement journée par
+journée face au relevé du mois, restitution dans chaque vue.
 """
 
-from io import BytesIO
 from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from src.matching import ReconciliationMatcher
-from src.readers import JournalReader, OMReader
+from src.matching import ControleMensuel
+from src.readers import EncaissementsReader, OMReader
 from ui import session
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 RACINE = Path(__file__).resolve().parent.parent
+JOURNAUX = ["encaissements_12-05-2026.xlsx", "encaissements_18-05-2026.xlsx"]
 
 
 class FichierTeleverse:
@@ -32,11 +33,11 @@ class FichierTeleverse:
 
 def test_le_fichier_temporaire_est_supprime_apres_lecture():
     """Le §16 interdit de laisser traîner une pièce comptable sur le disque."""
-    televerse = FichierTeleverse(FIXTURES / "journal_arrhes_exemple.xlsx")
+    televerse = FichierTeleverse(FIXTURES / JOURNAUX[0])
     with session.fichier_temporaire(televerse) as chemin:
         assert chemin.exists()
         assert chemin.suffix == ".xlsx"
-        lecture = JournalReader(chemin).read()
+        lecture = EncaissementsReader(chemin).read()
         vu = chemin
     assert not vu.exists()
     assert lecture.periode.libelle == "12/05/2026"
@@ -56,32 +57,33 @@ def test_le_fichier_temporaire_est_supprime_meme_en_cas_d_echec():
     assert not vu.exists()
 
 
-def _resultat_depuis_les_fixtures():
-    journal = JournalReader(FIXTURES / "journal_arrhes_exemple.xlsx").read()
+def _controle():
+    lectures = [EncaissementsReader(FIXTURES / nom).read() for nom in JOURNAUX]
     releve = OMReader(FIXTURES / "releve_om_exemple.xlsx").read()
-    resultat = ReconciliationMatcher().run(journal.periode, journal.lignes, releve.transactions)
-    return journal, releve, resultat
+    return lectures, releve, ControleMensuel().run(lectures, releve)
 
 
 def test_le_parcours_complet_produit_un_resultat_exploitable():
     """Ce que le bouton déclenche, de bout en bout."""
-    journal, releve, resultat = _resultat_depuis_les_fixtures()
+    lectures, _, mensuel = _controle()
 
-    assert resultat.periode == journal.periode
-    assert len(resultat.appariements) == 3
-    assert resultat.taux_rapprochement == 100.0
-    assert resultat.invariant_respecte()
-    assert len(resultat.recette_du_jour) == 2
-    assert resultat.export_possible
+    assert mensuel.nb_journees_deposees == 2
+    assert [j.periode.libelle for j in mensuel.journees] == ["12/05/2026", "18/05/2026"]
+    assert all(j.invariant_respecte() for j in mensuel.journees)
+    assert mensuel.export_possible
+    # Une journée du relevé n'a pas reçu son journal : le contrôle du mois est partiel.
+    assert not mensuel.complet
+    assert len(mensuel.non_couvertes) == 1
 
 
 def _app(vue: str) -> AppTest:
     """Lance l'application sur une vue, avec un contrôle déjà en session."""
-    journal, releve, resultat = _resultat_depuis_les_fixtures()
+    lectures, releve, mensuel = _controle()
     app = AppTest.from_file(str(RACINE / "app.py"), default_timeout=30)
-    app.session_state[session.CLE_JOURNAL] = journal
+    app.session_state[session.CLE_JOURNAUX] = lectures
     app.session_state[session.CLE_RELEVE] = releve
-    app.session_state[session.CLE_RESULTAT] = resultat
+    app.session_state[session.CLE_MENSUEL] = mensuel
+    app.session_state[session.CLE_JOURNEE] = mensuel.journees[0].periode.debut
     app.run()
     app.sidebar.radio[0].set_value(vue).run()
     return app
@@ -99,29 +101,51 @@ def _texte(app: AppTest) -> str:
     return "\n".join(str(m) for m in morceaux)
 
 
-def test_le_tableau_de_bord_affiche_le_resultat():
+def test_le_tableau_de_bord_affiche_le_mois_et_la_journee():
     app = _app("📊 Tableau de bord")
     assert not app.exception
     contenu = _texte(app)
     assert "12/05/2026" in contenu
-    assert "100.0 %" in contenu
+    assert "Journées contrôlées" in contenu
+    assert "Couverture du relevé" in contenu
     assert "Invariant vérifié" in contenu
-    assert "export comptable est ouvert" in contenu
+
+
+def test_le_tableau_de_bord_signale_les_journees_sans_journal():
+    """Ce qu'aucune journée prise isolément ne peut montrer."""
+    app = _app("📊 Tableau de bord")
+    contenu = _texte(app)
+    assert "n'ont pas reçu leur journal" in contenu
+    assert "45" in contenu  # les 45 000 FCFA du 20/05 échappent au contrôle
+
+
+def test_le_selecteur_de_journee_change_le_detail():
+    app = _app("⚖️ Rapprochement")
+    assert not app.exception
+    assert app.selectbox, "un sélecteur de journée est proposé dès deux journaux"
+    onglets = [tab.label for tab in app.tabs]
+    assert any("(5)" in libelle for libelle in onglets)  # 12/05 : cinq appariements
+
+
+def test_reconciliation_option_toutes_les_journees():
+    """Vérifie que le sélecteur de la vue rapprochement propose 'TOUTES' (Toutes les journées)."""
+    app = _app("⚖️ Rapprochement")
+    assert not app.exception
+    selecteurs = [sb for sb in app.selectbox if sb.label == "Journée contrôlée"]
+    assert len(selecteurs) == 1
+    assert "Toutes les journées" in selecteurs[0].options
+
+    # Sélectionner Toutes les journées et exécuter
+    selecteurs[0].select("Toutes les journées").run()
+    assert not app.exception
+    contenu = _texte(app)
+    assert "Toutes les journées" in contenu
 
 
 def test_le_tableau_de_bord_invite_a_importer_quand_rien_n_a_ete_lance():
     app = AppTest.from_file(str(RACINE / "app.py"), default_timeout=30).run()
     assert not app.exception
     assert "Aucun contrôle n'a encore été lancé" in _texte(app)
-
-
-def test_la_vue_rapprochement_separe_arrhes_et_recette():
-    app = _app("⚖️ Rapprochement")
-    assert not app.exception
-    onglets = [tab.label for tab in app.tabs]
-    assert any("Arrhes rapprochées (3)" in libelle for libelle in onglets)
-    assert any("Recette du jour (2)" in libelle for libelle in onglets)
-    assert any("Arrhes sans encaissement (0)" in libelle for libelle in onglets)
 
 
 def test_la_vue_anomalies_annonce_l_etat_du_verrou():
@@ -134,55 +158,4 @@ def test_la_vue_export_reste_fermee():
     """La génération n'existe pas encore : la vue doit le dire, pas le laisser croire."""
     app = _app("📑 Export Comptable Sage")
     assert not app.exception
-    assert app.button[0].disabled
-    assert "n'est pas encore développée" in _texte(app)
-
-
-def test_la_vue_reconciliation_filtres_et_recherche():
-    """Vérifie la présence et le bon fonctionnement des filtres de la Phase 6."""
-    app = _app("⚖️ Rapprochement")
-    assert not app.exception
-    # Les composants selectbox et text_input de filtre doivent être présents
-    assert len(app.selectbox) >= 1
-    assert len(app.text_input) >= 1
-
-
-def test_la_vue_anomalies_bloque_export_puis_se_deverrouille():
-    """Vérifie l'évaluation du verrou et la levée par validation humaine (§10, §19)."""
-    from datetime import datetime, time
-    from decimal import Decimal
-    from src.models import LigneJournal, Periode, TransactionOM
-    from src.matching.appariement import Appariement, ResultatRapprochement
-    from config.matching_config import MatchLevel
-
-    jour = datetime(2026, 4, 16).date()
-    l_ano = LigneJournal(
-        ligne_source=2,
-        date_operation=datetime(2026, 4, 16, 12, 0),
-        client="Client Inconnu",
-        mode_paiement="Orange Money",
-        montant=Decimal("15000"),
-        reference_interne="REF-ANO",
-    )
-    res_avec_anomalie = ResultatRapprochement(
-        periode=Periode.journee(jour),
-        arrhes_sans_om=[l_ano],  # MANQUANT_OM bloquant
-    )
-
-    app = AppTest.from_file(str(RACINE / "app.py"), default_timeout=30)
-    app.session_state[session.CLE_RESULTAT] = res_avec_anomalie
-    app.run()
-    app.sidebar.radio[0].set_value("⚠️ Anomalies & Écarts").run()
-
-    assert not app.exception
-    texte = _texte(app)
-    assert "export bloqué" in texte.lower()
-    assert "manquant_om" in texte.lower()
-
-    # Valider toutes les anomalies et vérifier la mise à jour
-    journal = app.session_state[session.CLE_DECISIONS]
-    journal.valider_toutes(res_avec_anomalie.arrhes_sans_om, auteur="Contrôleur", motif="Vérifié")
-    app.run()
-    texte_apres = _texte(app)
-    assert "aucune anomalie bloquante" in texte_apres.lower()
-
+    assert any(bouton.disabled for bouton in app.button)

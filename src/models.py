@@ -88,6 +88,11 @@ class LigneJournal:
     reference_interne: str = ""
     libelle: str = ""
     montant_reintegre: Decimal = ZERO
+    est_arrhe: bool = True
+
+    @property
+    def nature(self) -> str:
+        return "Arrhe" if self.est_arrhe else "Facture"
 
     @property
     def jour(self) -> date:

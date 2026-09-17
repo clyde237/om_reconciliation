@@ -37,7 +37,17 @@ def observer_appariement(appariement: Appariement) -> str:
 
     decalage = _decalage_en_jours(appariement)
     if decalage:
-        return f"Montant identique, date différente {_jours(decalage)}."
+        jour_j = appariement.lignes[0].jour.strftime("%d/%m/%Y") if appariement.lignes else ""
+        jour_om = (
+            appariement.transactions[0].date_operation.strftime("%d/%m/%Y")
+            if appariement.transactions and appariement.transactions[0].date_operation
+            else ""
+        )
+        montant = format_amount(appariement.montant_journal)
+        return (
+            f"Montant identique ({montant} {DEVISE}), décalage {_jours(decalage)} "
+            f"(journal : {jour_j}, OM : {jour_om}) : à valider."
+        )
 
     if appariement.niveau is MatchLevel.REFERENCE_MONTANT:
         return "Correspondance exacte trouvée : référence et montant identiques."

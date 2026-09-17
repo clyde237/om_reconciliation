@@ -101,21 +101,209 @@ class ExcelReportGenerator:
         tampon.seek(0)
         return tampon
 
+    def generate_reconciliation_colored_bytes(
+        self,
+        source: Union[ResultatRapprochement, Sequence[LigneRapprochement]],
+    ) -> io.BytesIO:
+        """Génère un classeur Excel de rapprochement avec surbrillance conditionnelle.
+
+        Colonnes :
+        1. Date
+        2. Client
+        3. Référence OM
+        4. Montant journal
+        5. Montant OM
+        6. Statut
+        7. Observation
+
+        Effets de surbrillance :
+        - Lignes correctes : vert (#DCFCE7 / texte #166534)
+        - Lignes non retrouvées (manquants journal et flux orphelins) : rouge (#FEE2E2 / texte #991B1B)
+        - Lignes problématiques à vérifier : fond neutre (#FFFBEB) et cellules en anomalie
+          (montants en désaccord, statut, etc.) en surbrillance jaune (#FEF08A / texte gras #854D0E).
+        """
+        if isinstance(source, ResultatRapprochement):
+            lignes = construire_table(source)
+        else:
+            lignes = list(source)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Rapprochement"
+        ws.views.sheetView[0].showGridLines = True
+        ws.freeze_panes = "A2"
+
+        headers = [
+            "Date",
+            "Client",
+            "Référence OM",
+            "Montant journal",
+            "Montant OM",
+            "Statut",
+            "Observation",
+        ]
+        for col_idx, h in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=h)
+            appliquer_style_entete(cell)
+
+        fill_green = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+        font_green = Font(name="Calibri", size=10, color="166534")
+        font_green_bold = Font(name="Calibri", size=10, bold=True, color="166534")
+
+        fill_red = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        font_red = Font(name="Calibri", size=10, color="991B1B")
+        font_red_bold = Font(name="Calibri", size=10, bold=True, color="991B1B")
+
+        fill_problem_row = PatternFill(start_color="FFFBEB", end_color="FFFBEB", fill_type="solid")
+        font_problem_row = Font(name="Calibri", size=10, color="0F172A")
+
+        fill_problem_cell = PatternFill(start_color="FEF08A", end_color="FEF08A", fill_type="solid")
+        font_problem_cell = Font(name="Calibri", size=10, bold=True, color="854D0E")
+
+        curr_row = 2
+        for ligne in lignes:
+            # Détection de la catégorie
+            est_non_retrouve = ligne.statut in (
+                MatchStatus.MANQUANT_OM,
+                MatchStatus.MANQUANT_JOURNAL,
+                MatchStatus.RECETTE_JOUR,
+                MatchStatus.STATUT_OM_INVALIDE,
+            )
+            est_correct = (
+                not est_non_retrouve
+                and (ligne.ecart == ZERO or (ligne.montant_journal == ligne.montant_om and ligne.montant_journal > ZERO))
+                and ligne.statut in (
+                    MatchStatus.CONFORME,
+                    MatchStatus.CORRESPONDANCE_GROUPEE,
+                    MatchStatus.CORRESPONDANCE_PROBABLE,
+                )
+            )
+
+            date_str = ligne.date_operation.strftime("%d/%m/%Y") if ligne.date_operation else ""
+            c1 = ws.cell(row=curr_row, column=1, value=date_str)
+            c2 = ws.cell(row=curr_row, column=2, value=ligne.client or "")
+            c3 = ws.cell(row=curr_row, column=3, value=ligne.reference or "")
+            c4 = ws.cell(row=curr_row, column=4, value=float(ligne.montant_journal))
+            c5 = ws.cell(row=curr_row, column=5, value=float(ligne.montant_om))
+            c6 = ws.cell(row=curr_row, column=6, value=ligne.statut.value)
+            c7 = ws.cell(row=curr_row, column=7, value=ligne.observation or "")
+
+            c4.number_format = FORMAT_MONTANT_FCFA
+            c5.number_format = FORMAT_MONTANT_FCFA
+
+            c1.alignment = ALIGN_CENTER
+            c2.alignment = ALIGN_LEFT
+            c3.alignment = ALIGN_CENTER
+            c4.alignment = ALIGN_RIGHT
+            c5.alignment = ALIGN_RIGHT
+            c6.alignment = ALIGN_CENTER
+            c7.alignment = ALIGN_LEFT
+
+            for cell in (c1, c2, c3, c4, c5, c6, c7):
+                cell.border = BORDER_THIN
+
+            if est_correct:
+                for cell in (c1, c2, c3, c4, c5, c7):
+                    cell.fill = fill_green
+                    cell.font = font_green
+                c6.fill = fill_green
+                c6.font = font_green_bold
+            elif est_non_retrouve:
+                for cell in (c1, c2, c3, c4, c5, c7):
+                    cell.fill = fill_red
+                    cell.font = font_red
+                c6.fill = fill_red
+                c6.font = font_red_bold
+            else:
+                # Ligne problématique à vérifier
+                for cell in (c1, c2, c3, c4, c5, c6, c7):
+                    cell.fill = fill_problem_row
+                    cell.font = font_problem_row
+
+                # Statut en surbrillance jaune
+                c6.fill = fill_problem_cell
+                c6.font = font_problem_cell
+
+                # Écart de montant : cellules montants en jaune
+                if ligne.montant_journal != ligne.montant_om:
+                    c4.fill = fill_problem_cell
+                    c4.font = font_problem_cell
+                    c5.fill = fill_problem_cell
+                    c5.font = font_problem_cell
+
+                # Doublon : référence en jaune
+                if ligne.statut == MatchStatus.DOUBLON:
+                    c3.fill = fill_problem_cell
+                    c3.font = font_problem_cell
+
+                # À contrôler : observation en jaune
+                if ligne.statut == MatchStatus.A_CONTROLER:
+                    c7.fill = fill_problem_cell
+                    c7.font = font_problem_cell
+
+            curr_row += 1
+
+        if lignes:
+            ws.cell(row=curr_row, column=1, value="TOTAL")
+            ws.cell(row=curr_row, column=4, value=f"=SUM(D2:D{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
+            ws.cell(row=curr_row, column=5, value=f"=SUM(E2:E{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
+
+            for c in range(1, 8):
+                cell = ws.cell(row=curr_row, column=c)
+                cell.font = FONT_DATA_BOLD
+                cell.fill = FILL_TOTAL
+                cell.border = BORDER_TOP_BOTTOM_DOUBLE
+                if c in (4, 5):
+                    cell.alignment = ALIGN_RIGHT
+                elif c == 2:
+                    cell.alignment = ALIGN_LEFT
+                else:
+                    cell.alignment = ALIGN_CENTER
+
+        ws.auto_filter.ref = f"A1:G{max(curr_row, 2)}"
+        ajuster_largeurs_colonnes(ws)
+
+        tampon = io.BytesIO()
+        wb.save(tampon)
+        tampon.seek(0)
+        return tampon
+
+    def generate_reconciliation_colored(
+        self,
+        source: Union[ResultatRapprochement, Sequence[LigneRapprochement]],
+        filename: str = "",
+    ) -> Path:
+        """Génère le classeur Excel de rapprochement coloré sur disque et retourne son chemin."""
+        tampon = self.generate_reconciliation_colored_bytes(source)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        if not filename:
+            nom_periode = self._extraire_nom_periode(source) if hasattr(source, "periode") else "Rapprochement"
+            filename = f"Rapprochement_{nom_periode}.xlsx"
+        filepath = self.output_dir / filename
+        filepath.write_bytes(tampon.getvalue())
+        return filepath
+
     def _extraire_nom_periode(self, source) -> str:
+        if hasattr(source, "periode") and hasattr(source.periode, "libelle"):
+            return source.periode.libelle.replace(" ", "_").replace("/", "-")
         if isinstance(source, SyntheseMensuelle):
             return source.periode_libelle.replace(" ", "_").replace("/", "-")
-        if isinstance(source, ResultatRapprochement):
-            return source.periode.libelle.replace(" ", "_").replace("/", "-")
         if isinstance(source, Sequence) and source:
             return source[0].periode.libelle.replace(" ", "_").replace("/", "-")
         return "Audit"
 
     def _build_workbook(
         self,
-        source: Union[ResultatRapprochement, Sequence[ResultatRapprochement], SyntheseMensuelle],
+        source: Union[ResultatRapprochement, Sequence[ResultatRapprochement], SyntheseMensuelle, Any],
     ) -> openpyxl.Workbook:
         """Assemble les 7 feuilles du rapport d'audit."""
-        if isinstance(source, SyntheseMensuelle):
+        if hasattr(source, "journees") and hasattr(source, "non_couvertes"):
+            resultats_liste = list(source.journees)
+            if not resultats_liste:
+                raise ValueError("Campagne mensuelle sans journées : impossible de générer le rapport Excel.")
+            synthese = generer_synthese_mensuelle(source)
+            resultat_principal = resultats_liste[0]
+        elif isinstance(source, SyntheseMensuelle):
             synthese = source
             resultat_principal = None
             resultats_liste = []
@@ -134,13 +322,13 @@ class ExcelReportGenerator:
         # Supprimer la feuille par défaut
         wb.remove(wb.active)
 
-        # 1. Synthèse
-        self._creer_feuille_synthese(wb, synthese)
-
         # Extraction des tables consolidées
         tables_lignes: list[LigneRapprochement] = []
         for r in resultats_liste:
             tables_lignes.extend(construire_table(r))
+
+        # 1. Synthèse
+        self._creer_feuille_synthese(wb, synthese, tables_lignes)
 
         # 2. Rapprochement
         self._creer_feuille_rapprochement(wb, tables_lignes)
@@ -165,7 +353,12 @@ class ExcelReportGenerator:
     # --------------------------------------------------------------------------
     # 1. Feuille Synthèse
     # --------------------------------------------------------------------------
-    def _creer_feuille_synthese(self, wb: openpyxl.Workbook, synthese: SyntheseMensuelle):
+    def _creer_feuille_synthese(
+        self,
+        wb: openpyxl.Workbook,
+        synthese: SyntheseMensuelle,
+        tables_lignes: Sequence[LigneRapprochement] = (),
+    ):
         ws = wb.create_sheet(title="Synthèse")
         ws.views.sheetView[0].showGridLines = True
 
@@ -200,17 +393,17 @@ class ExcelReportGenerator:
             appliquer_style_entete(cell)
 
         lignes_ctrl = [
-            ("Nombre de lignes du journal", controles.nb_lignes_journal, FORMAT_NOMBRE_ENTIER, "Lignes arrhes du journal comptable"),
-            ("Nombre de transactions OM", controles.nb_transactions_om, FORMAT_NOMBRE_ENTIER, "Transactions relevé Orange Money du jour"),
-            ("Total Journal (Arrhes)", float(controles.total_journal), FORMAT_MONTANT_FCFA, "Total arrhes déposées"),
+            ("Nombre de lignes du journal", controles.nb_lignes_journal, FORMAT_NOMBRE_ENTIER, "Lignes d'encaissements du journal comptable"),
+            ("Nombre de transactions OM", controles.nb_transactions_om, FORMAT_NOMBRE_ENTIER, "Transactions relevé Orange Money de la période"),
+            ("Total Journal (Encaissements)", float(controles.total_journal), FORMAT_MONTANT_FCFA, "Total encaissements déposés"),
             ("Total Orange Money", float(controles.total_om), FORMAT_MONTANT_FCFA, "Total encaissements relevé OM"),
-            ("Total Rapproché", float(controles.total_rapproche), FORMAT_MONTANT_FCFA, "Arrhes avec encaissement OM confirmé"),
-            ("Total Recette du Jour", float(controles.total_recette_du_jour), FORMAT_MONTANT_FCFA, "Encaissements OM ordinaires (hors arrhes)"),
-            ("Total Non Rapproché", float(controles.total_non_rapproche), FORMAT_MONTANT_FCFA, "Arrhes sans OM + recette du jour"),
+            ("Total Rapproché", float(controles.total_rapproche), FORMAT_MONTANT_FCFA, "Encaissements avec flux OM confirmé"),
+            ("Total Recette du Jour", float(controles.total_recette_du_jour), FORMAT_MONTANT_FCFA, "Transactions OM sans écriture correspondante"),
+            ("Total Non Rapproché", float(controles.total_non_rapproche), FORMAT_MONTANT_FCFA, "Encaissements non lettrés + transactions OM orphelines"),
             ("Montant des Écarts", float(controles.montant_ecarts), FORMAT_MONTANT_FCFA, "Écarts de montant sur appariements"),
-            ("Taux de Rapprochement", controles.taux_rapprochement / 100.0, FORMAT_POURCENTAGE, "Couverture arrhes rapprochées / journal"),
+            ("Taux de Rapprochement", controles.taux_rapprochement / 100.0, FORMAT_POURCENTAGE, "Couverture encaissements rapprochés / journal"),
             ("Conformités (Exactes)", controles.nb_conformites, FORMAT_NOMBRE_ENTIER, "Appariements sans aucun écart"),
-            ("Manquants", controles.nb_manquants, FORMAT_NOMBRE_ENTIER, "Arrhes sans flux OM ou OM sans journal"),
+            ("Manquants", controles.nb_manquants, FORMAT_NOMBRE_ENTIER, "Encaissements sans flux OM ou OM sans journal"),
             ("Doublons détectés", controles.nb_doublons, FORMAT_NOMBRE_ENTIER, "Doublons potentiels journal ou relevé"),
             ("Anomalies bloquantes", controles.nb_anomalies, FORMAT_NOMBRE_ENTIER, "Lignes exigeant une décision avant export"),
             ("Total Commissions OM", float(controles.total_commissions), FORMAT_MONTANT_FCFA, "Frais prélevés à la transaction (suivis à part)"),
@@ -285,6 +478,116 @@ class ExcelReportGenerator:
                 cell.fill = FILL_TOTAL
                 cell.border = BORDER_TOP_BOTTOM_DOUBLE
                 cell.alignment = ALIGN_RIGHT if c >= 3 else (ALIGN_CENTER if c == 1 else ALIGN_LEFT)
+
+        # Section 3 : Détail des Opérations Bloquantes pour l'Export Comptable
+        curr_row += 2
+        ws.cell(
+            row=curr_row,
+            column=1,
+            value="3. Détail des Opérations Bloquantes pour l'Export Comptable",
+        ).font = FONT_SECTION
+        curr_row += 1
+
+        bloquantes = [l for l in tables_lignes if l.est_bloquante]
+        if not bloquantes:
+            c = ws.cell(
+                row=curr_row,
+                column=1,
+                value="✅ Aucune opération bloquante détectée. L'export comptable SAGE peut être généré en toute sécurité.",
+            )
+            c.font = Font(name="Calibri", size=10, bold=True, color="166534")
+            c.fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+            c.border = BORDER_THIN
+            c.alignment = ALIGN_LEFT
+            ws.merge_cells(f"A{curr_row}:H{curr_row}")
+            curr_row += 1
+        else:
+            headers_bloq = [
+                "Date",
+                "Client / Correspondant",
+                "Référence",
+                "Montant Journal",
+                "Montant OM",
+                "Écart",
+                "Statut Bloquant",
+                "Motif du Blocage & Action Requise",
+            ]
+            for col_idx, h in enumerate(headers_bloq, start=1):
+                cell = ws.cell(row=curr_row, column=col_idx, value=h)
+                appliquer_style_entete(cell)
+
+            curr_row += 1
+            start_bloq_row = curr_row
+            fill_bloq_row = PatternFill(start_color="FFF1F2", end_color="FFF1F2", fill_type="solid")
+            fill_bloq_cell = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+            font_bloq_stat = Font(name="Calibri", size=10, bold=True, color="991B1B")
+
+            for idx, ligne in enumerate(bloquantes):
+                date_str = ligne.date_operation.strftime("%d/%m/%Y") if ligne.date_operation else ""
+                c_date = ws.cell(row=curr_row, column=1, value=date_str)
+                c_cli = ws.cell(row=curr_row, column=2, value=ligne.client or "")
+                c_ref = ws.cell(row=curr_row, column=3, value=ligne.reference or "")
+                c_mj = ws.cell(row=curr_row, column=4, value=float(ligne.montant_journal))
+                c_mom = ws.cell(row=curr_row, column=5, value=float(ligne.montant_om))
+                c_ec = ws.cell(row=curr_row, column=6, value=float(ligne.ecart))
+                c_stat = ws.cell(row=curr_row, column=7, value=ligne.statut.value)
+
+                obs = ligne.observation or ""
+                if ligne.statut == MatchStatus.MANQUANT_OM:
+                    action = "Vérifier le relevé bancaire/caisse ou relancer le client pour preuve de transaction."
+                elif ligne.statut == MatchStatus.MANQUANT_JOURNAL:
+                    action = "Identifier le client émetteur et saisir l'écriture d'encaissement correspondante."
+                elif ligne.statut == MatchStatus.ECART_MONTANT:
+                    action = "Régulariser l'écart en comptabilité ou ajuster la saisie au montant OM réel."
+                elif ligne.statut == MatchStatus.DOUBLON:
+                    action = "Vérifier s'il s'agit d'une double saisie au journal ou de deux flux distincts."
+                else:
+                    action = "Contrôler la pièce et valider/rejeter l'anomalie dans l'onglet dédié."
+
+                motif_action = f"{obs} — Action : {action}" if obs else f"Bloquant ({ligne.statut.value}) — Action : {action}"
+                c_obs = ws.cell(row=curr_row, column=8, value=motif_action)
+
+                c_mj.number_format = FORMAT_MONTANT_FCFA
+                c_mom.number_format = FORMAT_MONTANT_FCFA
+                c_ec.number_format = FORMAT_MONTANT_FCFA
+
+                c_date.alignment = ALIGN_CENTER
+                c_cli.alignment = ALIGN_LEFT
+                c_ref.alignment = ALIGN_CENTER
+                c_mj.alignment = ALIGN_RIGHT
+                c_mom.alignment = ALIGN_RIGHT
+                c_ec.alignment = ALIGN_RIGHT
+                c_stat.alignment = ALIGN_CENTER
+                c_obs.alignment = ALIGN_LEFT
+
+                for col_i, cell in enumerate([c_date, c_cli, c_ref, c_mj, c_mom, c_ec, c_stat, c_obs], start=1):
+                    cell.border = BORDER_THIN
+                    if col_i == 7:
+                        cell.fill = fill_bloq_cell
+                        cell.font = font_bloq_stat
+                    else:
+                        cell.fill = fill_bloq_row
+                        cell.font = FONT_DATA
+
+                curr_row += 1
+
+            # Ligne de total opérations bloquantes
+            ws.cell(row=curr_row, column=1, value="TOTAL OPÉRATIONS BLOQUANTES")
+            ws.cell(row=curr_row, column=4, value=f"=SUM(D{start_bloq_row}:D{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
+            ws.cell(row=curr_row, column=5, value=f"=SUM(E{start_bloq_row}:E{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
+            ws.cell(row=curr_row, column=6, value=f"=SUM(F{start_bloq_row}:F{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
+
+            for c in range(1, 9):
+                cell = ws.cell(row=curr_row, column=c)
+                cell.font = FONT_DATA_BOLD
+                cell.fill = FILL_TOTAL
+                cell.border = BORDER_TOP_BOTTOM_DOUBLE
+                if c in (4, 5, 6):
+                    cell.alignment = ALIGN_RIGHT
+                elif c == 1:
+                    cell.alignment = ALIGN_LEFT
+                else:
+                    cell.alignment = ALIGN_CENTER
 
         ajuster_largeurs_colonnes(ws)
 
@@ -373,6 +676,7 @@ class ExcelReportGenerator:
             "Montant OM",
             "Écart",
             "Statut",
+            "Bloquant Export",
             "Observation / Action requise",
             "Compte OM",
         ]
@@ -386,9 +690,12 @@ class ExcelReportGenerator:
         if not anomalies:
             cell = ws.cell(row=2, column=1, value="Aucune anomalie détectée sur cette période.")
             cell.font = FONT_DATA
-            ws.merge_cells("A2:I2")
+            ws.merge_cells("A2:J2")
             curr_row = 3
         else:
+            fill_bloq = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+            font_bloq_oui = Font(name="Calibri", size=10, bold=True, color="991B1B")
+
             for idx, ligne in enumerate(anomalies):
                 is_even = idx % 2 == 1
                 date_str = ligne.date_operation.strftime("%d/%m/%Y") if ligne.date_operation else ""
@@ -399,13 +706,20 @@ class ExcelReportGenerator:
                 ws.cell(row=curr_row, column=5, value=float(ligne.montant_om)).number_format = FORMAT_MONTANT_FCFA
                 ws.cell(row=curr_row, column=6, value=float(ligne.ecart)).number_format = FORMAT_MONTANT_FCFA
                 c_stat = ws.cell(row=curr_row, column=7, value=ligne.statut.value)
-                ws.cell(row=curr_row, column=8, value=ligne.observation)
-                ws.cell(row=curr_row, column=9, value=ligne.compte_om)
+                c_bloq = ws.cell(row=curr_row, column=8, value="OUI" if ligne.est_bloquante else "NON")
+                ws.cell(row=curr_row, column=9, value=ligne.observation)
+                ws.cell(row=curr_row, column=10, value=ligne.compte_om)
 
-                for col_i in [1, 2, 3, 4, 5, 6, 8, 9]:
+                for col_i in [1, 2, 3, 4, 5, 6, 8, 9, 10]:
                     cell = ws.cell(row=curr_row, column=col_i)
-                    align = ALIGN_RIGHT if col_i in (4, 5, 6) else (ALIGN_CENTER if col_i in (1, 9) else ALIGN_LEFT)
+                    align = ALIGN_RIGHT if col_i in (4, 5, 6) else (ALIGN_CENTER if col_i in (1, 8, 10) else ALIGN_LEFT)
                     appliquer_style_donnees(cell, is_even=is_even, align=align)
+
+                if ligne.est_bloquante:
+                    c_bloq.font = font_bloq_oui
+                    c_bloq.fill = fill_bloq
+                else:
+                    c_bloq.font = FONT_MUTED
 
                 appliquer_style_statut(c_stat, ligne.statut)
                 curr_row += 1
@@ -416,7 +730,7 @@ class ExcelReportGenerator:
             ws.cell(row=curr_row, column=5, value=f"=SUM(E2:E{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
             ws.cell(row=curr_row, column=6, value=f"=SUM(F2:F{curr_row-1})").number_format = FORMAT_MONTANT_FCFA
 
-            for c in range(1, 10):
+            for c in range(1, 11):
                 cell = ws.cell(row=curr_row, column=c)
                 cell.font = FONT_DATA_BOLD
                 cell.fill = FILL_TOTAL
@@ -424,7 +738,7 @@ class ExcelReportGenerator:
                 if c in (4, 5, 6):
                     cell.alignment = ALIGN_RIGHT
 
-        ws.auto_filter.ref = f"A1:I{max(curr_row-1, 1)}"
+        ws.auto_filter.ref = f"A1:J{max(curr_row-1, 1)}"
         ajuster_largeurs_colonnes(ws)
 
     # --------------------------------------------------------------------------
@@ -499,7 +813,7 @@ class ExcelReportGenerator:
                 ws.cell(row=curr_row, column=5, value=t.correspondant)
                 ws.cell(row=curr_row, column=6, value=float(t.montant)).number_format = FORMAT_MONTANT_FCFA
                 ws.cell(row=curr_row, column=7, value=float(t.commission)).number_format = FORMAT_MONTANT_FCFA
-                ws.cell(row=curr_row, column=8, value="Recette ordinaire du jour (hors journal des arrhes)")
+                ws.cell(row=curr_row, column=8, value="Recette ordinaire du jour (hors journal des encaissements)")
 
                 for col_i in range(1, 9):
                     cell = ws.cell(row=curr_row, column=col_i)
@@ -549,7 +863,7 @@ class ExcelReportGenerator:
         curr_row = 2
 
         if not manquants:
-            cell = ws.cell(row=2, column=1, value="Toutes les arrhes du journal ont trouvé leur encaissement Orange Money.")
+            cell = ws.cell(row=2, column=1, value="Tous les encaissements du journal ont trouvé leur transaction Orange Money.")
             cell.font = FONT_DATA
             ws.merge_cells("A2:G2")
             curr_row = 3
@@ -596,7 +910,7 @@ class ExcelReportGenerator:
         ws.views.sheetView[0].showGridLines = True
 
         # Section 1 : Doublons Journal
-        ws.cell(row=1, column=1, value="1. Doublons détectés dans le Journal des Arrhes").font = FONT_SECTION
+        ws.cell(row=1, column=1, value="1. Doublons détectés dans le Journal des Encaissements").font = FONT_SECTION
 
         headers_dj = ["Ligne Source", "Date", "Client", "Réservation", "Montant", "Statut Doublon"]
         for col_idx, h in enumerate(headers_dj, start=1):
@@ -607,7 +921,7 @@ class ExcelReportGenerator:
         curr_row = 3
 
         if not tous_dj:
-            c = ws.cell(row=3, column=1, value="Aucun doublon détecté dans le journal des arrhes.")
+            c = ws.cell(row=3, column=1, value="Aucun doublon détecté dans le journal des encaissements.")
             c.font = FONT_DATA
             ws.merge_cells("A3:F3")
             curr_row = 4
@@ -678,7 +992,7 @@ class ExcelReportGenerator:
         headers = [
             "Date",
             "Lignes Journal",
-            "Total Arrhes",
+            "Total Journal",
             "Transactions OM",
             "Total OM",
             "Total Rapproché",
@@ -715,6 +1029,9 @@ class ExcelReportGenerator:
                 if dj.statut_global == "CONFORME":
                     c_stat.fill = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
                     c_stat.font = Font(name="Calibri", size=10, bold=True, color="166534")
+                elif dj.statut_global == "NON COUVERTE (SANS JOURNAL)":
+                    c_stat.fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+                    c_stat.font = Font(name="Calibri", size=10, bold=True, color="991B1B")
                 else:
                     c_stat.fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
                     c_stat.font = Font(name="Calibri", size=10, bold=True, color="92400E")
@@ -753,3 +1070,10 @@ class ExcelReportGenerator:
 
         ws.auto_filter.ref = f"A1:I{max(curr_row-1, 1)}"
         ajuster_largeurs_colonnes(ws)
+
+
+def generer_excel_rapprochement_colore(
+    source: Union[ResultatRapprochement, Sequence[LigneRapprochement]],
+) -> io.BytesIO:
+    """Raccourci pour générer en mémoire le classeur de rapprochement coloré."""
+    return ExcelReportGenerator().generate_reconciliation_colored_bytes(source)

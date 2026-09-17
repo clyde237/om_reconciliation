@@ -47,24 +47,28 @@
 
 ---
 
-## 2. Décisions arbitrées le 15/09/2026
+## 2. Décisions arbitrées le 15/09/2026 & 16/09/2026
 
 | Sujet | Décision |
 |---|---|
+| **Source principale** | **Journal des encaissements** (au lieu du journal des arrhes seul) — englobe arrhes et factures directes (Kotibé, Baleng, etc.) par mode de paiement (colonne Orange Money) |
+| **Contrôle mensuel** | Support de N journaux quotidiens face au relevé mensuel OM, détection des jours non couverts et doublons |
 | **Statuts bloquant l'export** | `ECART_MONTANT`, `MANQUANT_OM`, `MANQUANT_JOURNAL`, `A_CONTROLER` |
 | **Version Python** | **3.14** — validée en pratique : Streamlit 1.63, Pandas 3.0.5, OpenPyXL 3.1.5, RapidFuzz 3.14.6, Pydantic 2.13.5, Loguru 0.7.3, Pytest 9.1.1 s'installent et s'importent |
 | **Format d'import Sage** | **PNM**, relevé sur quatre fichiers réels et couvert par 15 tests |
-| **Résidu du rapprochement** | Les encaissements OM de la journée sans arrhe correspondante deviennent la **recette du jour** (`RECETTE_JOUR`), pas des manquants |
+| **Résidu du rapprochement** | Les encaissements OM de la journée sans écriture correspondante deviennent la **recette du jour** (`RECETTE_JOUR`), pas des manquants |
 
 Ces choix sont posés dans [`config/matching_config.py`](config/matching_config.py)
-(`BLOCKING_STATUSES`) et [`config/sage_config.py`](config/sage_config.py) (`PNM_LAYOUT`).
+(`BLOCKING_STATUSES`), [`config/sage_config.py`](config/sage_config.py) (`PNM_LAYOUT`) et
+[`config/settings.py`](config/settings.py) (`ENCAISSEMENTS_*`).
 
-> **Arbitrage du 16/09/2026 — le résidu est la recette du jour.** Le relevé porte tous les
-> encaissements du point de vente, le journal des arrhes seulement les arrhes. Les six
-> encaissements du 16/04 se décomposent en trois arrhes et trois recettes ordinaires. Le grand
-> livre confirme le rapport de force : 88 recettes agrégées pour 9 arrhes individuelles. Sans
-> cette règle, `MANQUANT_JOURNAL` — statut bloquant — se déclencherait chaque jour sur des
-> opérations normales.
+> **Arbitrage du 16/09/2026 — passage au Journal des Encaissements.** Le journal des encaissements
+> recense l'intégralité des règlements perçus sur tous les points de vente de l'hôtel (chambres,
+> restaurant Kotibé, restaurant Baleng), avec une colonne dédiée à Orange Money.
+> Sur la journée test réelle du 16/04/2026, la confrontation donne un **rapprochement parfait à 100 %** :
+> 3 arrhes (290 600 FCFA) + 4 factures directes (18 000 FCFA) = 308 600 FCFA, égalant exactement
+> les 308 600 FCFA du relevé Orange Money (dont une combinaison automatique niveau 5 de 10 500 FCFA
+> pour 2 factures Kotibé réglées en un seul flux OM). 0 manquant, 0 écart.
 
 Deux conséquences de l'arbitrage sur les statuts, à garder en tête :
 

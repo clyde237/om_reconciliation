@@ -1,30 +1,33 @@
-"""Vue de téléversement et lancement du contrôle."""
+"""Vue de téléversement et lancement du contrôle mensuel."""
 
 import streamlit as st
 
-from src.matching import ReconciliationMatcher
+from src.matching import ControleMensuel
 from src.normalization.amounts import format_amount
-from src.readers import JournalReader, OMReader
+from src.readers import EncaissementsReader, OMReader
 from ui import session
 from ui.components import render_header
 
 
 def render_upload_view():
-    """Étape 1 : importer les deux sources et lancer le contrôle de la journée."""
+    """Étape 1 : déposer les journaux du mois et le relevé, puis lancer le contrôle."""
     render_header(
         "📥 Importation des Fichiers",
-        "Le journal des arrhes porte la période ; le relevé mensuel est filtré dessus",
+        "Les journaux des encaissements portent les journées ; le relevé mensuel les couvre toutes",
     )
 
-    colonne_journal, colonne_om = st.columns(2)
+    colonne_journaux, colonne_om = st.columns(2)
 
-    with colonne_journal:
-        st.subheader("1. Journal des Arrhes")
-        fichier_journal = st.file_uploader(
-            "Export du journal (une journée)", type=["xlsx", "xls"], key="upload_arrhes"
+    with colonne_journaux:
+        st.subheader("1. Journaux des encaissements")
+        journaux = st.file_uploader(
+            "Un journal par journée — déposez tout le mois d'un coup",
+            type=["xlsx", "xls"],
+            accept_multiple_files=True,
+            key="upload_encaissements",
         )
-        if fichier_journal:
-            st.caption(f"Sélectionné : {fichier_journal.name}")
+        if journaux:
+            st.caption(f"{len(journaux)} journal/journaux sélectionné(s)")
 
     with colonne_om:
         st.subheader("2. Relevé Orange Money")
@@ -36,11 +39,11 @@ def render_upload_view():
 
     st.markdown("---")
 
-    manquants = [
-        nom
-        for nom, fichier in (("le journal des arrhes", fichier_journal), ("le relevé Orange Money", fichier_om))
-        if fichier is None
-    ]
+    manquants = []
+    if not journaux:
+        manquants.append("au moins un journal des encaissements")
+    if fichier_om is None:
+        manquants.append("le relevé Orange Money")
     if manquants:
         st.info(f"Il manque {' et '.join(manquants)} pour lancer le contrôle.")
 
@@ -49,40 +52,50 @@ def render_upload_view():
         type="primary",
         disabled=bool(manquants),
     ):
-        _lancer(fichier_journal, fichier_om)
+        _lancer(journaux, fichier_om)
 
     if session.erreur():
         st.error(session.erreur())
-    elif session.resultat() is not None:
+    elif session.mensuel() is not None:
         _rapport_import()
 
 
-def _lancer(fichier_journal, fichier_om) -> None:
+def _lancer(journaux, fichier_om) -> None:
     with st.status("Contrôle en cours…", expanded=True) as etat:
         try:
-            st.write("Lecture du journal des arrhes…")
-            with session.fichier_temporaire(fichier_journal) as chemin:
-                journal = JournalReader(chemin).read()
-            st.write(f"Période contrôlée : **{journal.periode.libelle}**")
+            st.write(f"Lecture de {len(journaux)} journal/journaux…")
+            lectures, illisibles = [], []
+            barre = st.progress(0.0)
+            for rang, fichier in enumerate(journaux, start=1):
+                try:
+                    with session.fichier_temporaire(fichier) as chemin:
+                        lectures.append(EncaissementsReader(chemin).read())
+                except Exception as erreur:  # noqa: BLE001
+                    illisibles.append((fichier.name, str(erreur)))
+                barre.progress(rang / len(journaux))
+
+            if not lectures:
+                raise ValueError(
+                    "Aucun journal n'a pu être lu. "
+                    + " ".join(f"{nom} : {motif}" for nom, motif in illisibles)
+                )
+            for nom, motif in illisibles:
+                st.warning(f"{nom} ignoré — {motif}")
 
             st.write("Lecture du relevé Orange Money…")
             with session.fichier_temporaire(fichier_om) as chemin:
                 releve = OMReader(chemin).read()
             st.write(f"{len(releve.comptes)} compte(s), {len(releve.transactions)} transaction(s)")
 
-            if releve.periode_declaree and not releve.periode_declaree.contient(journal.periode.debut):
-                st.warning(
-                    f"Le relevé couvre {releve.periode_declaree.libelle} et ne contient pas "
-                    f"la journée {journal.periode.libelle}. Le rapprochement sera vide."
-                )
+            st.write("Rapprochement journée par journée…")
+            mensuel = ControleMensuel().run(lectures, releve)
+            session.enregistrer(lectures, releve, mensuel)
 
-            st.write("Rapprochement…")
-            resultat = ReconciliationMatcher().run(
-                journal.periode, journal.lignes, releve.transactions
-            )
-            session.enregistrer(journal, releve, resultat)
             etat.update(
-                label=f"Contrôle du {journal.periode.libelle} terminé", state="complete", expanded=False
+                label=f"Contrôle terminé — {mensuel.nb_journees_deposees} journée(s) sur "
+                f"{mensuel.periode.libelle}",
+                state="complete",
+                expanded=False,
             )
         except Exception as erreur:  # noqa: BLE001 — remonté tel quel à l'utilisateur
             session.signaler_erreur(f"Le contrôle a échoué : {erreur}")
@@ -90,30 +103,47 @@ def _lancer(fichier_journal, fichier_om) -> None:
 
 
 def _rapport_import() -> None:
-    """Ce qui a été lu, et surtout ce qui a été écarté et pourquoi."""
-    journal, releve, resultat = session.journal(), session.releve(), session.resultat()
+    """Ce qui a été lu, ce qui a été écarté, et ce qui manque à l'appel."""
+    mensuel, releve = session.mensuel(), session.releve()
 
     st.success(
-        f"Journée du {resultat.periode.libelle} — "
-        f"{len(resultat.appariements)} arrhe(s) rapprochée(s) sur "
-        f"{len(resultat.appariements) + len(resultat.arrhes_sans_om)}, "
-        f"recette du jour {format_amount(resultat.total_recette_du_jour)} FCFA."
+        f"{mensuel.nb_journees_deposees} journée(s) contrôlée(s) sur {mensuel.periode.libelle} — "
+        f"{format_amount(mensuel.total_om_controle)} FCFA rapprochés, "
+        f"couverture {mensuel.taux_couverture:.1f} % du relevé."
     )
 
+    if mensuel.doublons_de_journee:
+        for jour, fichiers in mensuel.doublons_de_journee.items():
+            st.error(
+                f"La journée du {jour:%d/%m/%Y} a été déposée plusieurs fois "
+                f"({', '.join(fichiers)}). Seul le premier journal a été retenu."
+            )
+    if mensuel.hors_releve:
+        jours = ", ".join(jour.strftime("%d/%m/%Y") for jour in mensuel.hors_releve)
+        st.warning(f"Journaux hors du relevé déposé : {jours}.")
+
     gauche, droite = st.columns(2)
+
     with gauche:
-        st.markdown("**Journal des arrhes**")
+        st.markdown("**Journaux des encaissements**")
+        journaux = session.journaux()
+        total_lu = sum((lecture.total_om for lecture in journaux), 0)
         st.write(
-            f"- {journal.lot.resume()}\n"
-            f"- dont {len(journal.lignes_orange_money)} en Orange Money, "
-            f"total {format_amount(journal.total_orange_money)} FCFA"
+            f"- {len(journaux)} journal/journaux lu(s)\n"
+            f"- {sum(len(l.mouvements) for l in journaux)} mouvement(s) Orange Money\n"
+            f"- total {format_amount(total_lu)} FCFA"
         )
-        if journal.periode_deduite:
-            st.warning("Période absente de l'en-tête : déduite des lignes datées.")
-        if journal.lot.rejets:
-            with st.expander(f"{len(journal.lot.rejets)} ligne(s) écartée(s)"):
-                for numero, motif in journal.lot.rejets:
-                    st.caption(f"ligne {numero} — {motif}")
+        ecarts = [l for l in journaux if l.ecart_au_recapitulatif()]
+        if ecarts:
+            st.error(
+                "Lecture incomplète : "
+                + ", ".join(
+                    f"{l.source} (écart {format_amount(l.ecart_au_recapitulatif())})"
+                    for l in ecarts
+                )
+            )
+        else:
+            st.caption("Chaque journal est conforme au récapitulatif qu'il annonce.")
 
     with droite:
         st.markdown("**Relevé Orange Money**")
@@ -127,3 +157,22 @@ def _rapport_import() -> None:
             for compte in releve.comptes:
                 nombre = sum(1 for t in releve.transactions if t.compte_agent == compte.numero)
                 st.caption(f"{compte.numero} — {compte.point_de_vente} ({nombre} transactions)")
+
+    if mensuel.non_couvertes:
+        st.markdown("---")
+        st.warning(
+            f"**{len(mensuel.non_couvertes)} journée(s) du relevé sans journal déposé** — "
+            f"{format_amount(mensuel.total_om_non_controle)} FCFA échappent au contrôle."
+        )
+        st.dataframe(
+            [
+                {
+                    "Journée": non.jour.strftime("%d/%m/%Y"),
+                    "Transactions OM": non.nb_transactions,
+                    "Montant": format_amount(non.total),
+                }
+                for non in mensuel.non_couvertes
+            ],
+            hide_index=True,
+            width="stretch",
+        )

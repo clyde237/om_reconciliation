@@ -2,9 +2,10 @@
 
 Les fichiers réels contiennent des noms de clients et des numéros de téléphone : ils
 restent dans `data/input/`, exclu du dépôt. Ces exemples en reproduisent **la
-structure et les pièges** — bloc d'en-tête, table décalée, sous-totaux, récapitulatif,
-sous-relevés concaténés, en-têtes brouillés par les cellules fusionnées — avec des
-données entièrement fabriquées.
+structure et les pièges** — bloc d'en-tête portant la période, table décalée,
+ventilation par mode de paiement, récapitulatif auto-vérifiant, sous-relevés
+concaténés, en-têtes brouillés par les cellules fusionnées — avec des données
+entièrement fabriquées.
 
 Régénération :
 
@@ -17,64 +18,6 @@ from pathlib import Path
 from openpyxl import Workbook
 
 ICI = Path(__file__).resolve().parent
-
-
-def journal_des_arrhes() -> Workbook:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "A"
-
-    # Bloc d'en-tête : tout tient dans une seule cellule, période comprise.
-    ws["C1"] = (
-        "Journal des arrhes\n\nHOTEL EXEMPLE SA \nBP000 VILLE  \n"
-        "Tél: +237200000000\n12/05/2026 09:00 POSTE-TEST Agent TEST (00-00-0) \n\n\n"
-        "Période du 12/05/2026 au 12/05/2026  (Type d'arrhes : Toutes)  \n"
-    )
-
-    # Ligne 2 : les en-têtes, avec les retours à la ligne de l'export réel.
-    ws.append([])  # ligne 1 déjà remplie par affectation directe
-    for colonne, valeur in enumerate(
-        ["Date", "Compte / Réservation", "Réintégration", "Encaissement",
-         "Montant\nEncaissé", "Montant\nRéintégré", "Solde non\nréintégré", "Réservation"],
-        start=1,
-    ):
-        ws.cell(row=2, column=colonne, value=valeur)
-
-    lignes = [
-        (datetime(2026, 5, 12, 9, 30), "ENTREPRISE EXEMPLE", None, "Espèces", 500000, None, 500000),
-        (datetime(2026, 5, 12, 11, 15),
-         "Monsieur ALPHA Jean\nRéservation N°9001 13/05/26  ALPHA",
-         "Facture N°TS-0001  75 000 FCFA 14/05/2026", "Orange Money", 75000, 75000, 0),
-        (datetime(2026, 5, 12, 14, 5),
-         "Madame BETA Claire\nRéservation N°9002 13/05/26  BETA",
-         "Facture N°TS-0002  120 500 FCFA 14/05/2026", "Orange Money", 120500, 120500, 0),
-        (datetime(2026, 5, 12, 17, 40),
-         "Monsieur GAMMA Paul\nRéservation N°9003 14/05/26  GAMMA",
-         "Facture N°TS-0003  75 000 FCFA 15/05/2026", "Orange Money", 75000, 75000, 0),
-        (datetime(2026, 5, 12, 18, 20),
-         "Madame DELTA Sophie\nRéservation N°9004 14/05/26  DELTA",
-         "Facture N°TS-0004  40 000 FCFA 15/05/2026", "Virement Bancaire", 40000, 40000, 0),
-    ]
-    for ligne in lignes:
-        ws.append(list(ligne))
-
-    # Pied de table : sous-totaux, note, pagination.
-    ws.append(["Sous-total des arrhes antérieures à la période éditée", None, None, None, 0, 0, 0])
-    ws.append(["Sous-total des arrhes de la période éditée", None, None, None, 810500, 310500, 500000])
-    ws.append(["Total (avec solde antérieur à la période)", None, None, None, 810500, 310500, 500000])
-    ws.append(["* Les lignes de détail en italiques sont des arrhes antérieures."])
-    ws.append([None, None, None, None, None, None, "1 / 1"])
-
-    # Bloc « Récapitulatif » : des libellés en colonne date, aucun n'est une date.
-    ws.append(["Récapitulatif", "Arrhes\nPerçues", "Arrhes réintégrées", None, "Arrhes période"])
-    ws.append([None, None, "Réintégrées", "Solde âgé", "Réintégrées", "Solde"])
-    ws.append(["Solde au 11/05/26", None, None, 0, None, 0])
-    ws.append(["Espèces", 500000, 0, 500000, 0, 500000])
-    ws.append(["Virement Bancaire", 40000, 40000, 0, 40000, 0])
-    ws.append(["Orange Money", 270500, 270500, 0, 270500, 0])
-    ws.append(["Total encaissements période", 810500, 310500, 500000, 310500, 500000])
-    ws.append(["Totaux", None, None, 500000, None, 500000])
-    return wb
 
 
 def _entetes_releve(ws, brouilles: bool) -> None:
@@ -168,12 +111,96 @@ def releve_orange_money() -> Workbook:
     # Ligne de commission : un numéro, aucune date.
     ws.append([9, None, None, None, "  Commissions", None, None, None, "600000002", "Normal",
                None, "600000002", None, 4500])
+    ws.append(_transaction(10, "20/05/2026", "10:15:00", "MP260520.1015.I00010",
+                           "Merchant Payment", "Succès", "600000002", "690000018",
+                           credit=45000, commission=-450))
     ws.append(["Relevé de vos opérations", None, None, "Transactions réussies", "Wallet Normal",
                None, None, None, "600000002", "Normal", None, "Solde final", None, None, 95000])
     return wb
 
 
+MODES = ["Total", "Espèces", "Chèque", "Carte Bancaire", "Crédit", "Transfert PV",
+         "Virement Bancaire", "Orange Money", "MTN Mobile Money", "CB Visa",
+         "Arrhes/Acpt réintégrés"]
+COL_OM = MODES.index("Orange Money")
+
+
+def _mouvement(libelle, total, **modes):
+    """Une ligne du journal : le libellé, le total, puis la ventilation par mode."""
+    ligne = [libelle] + [None] * len(MODES)
+    ligne[1] = total
+    for mode, montant in modes.items():
+        ligne[1 + MODES.index(mode.replace("_", " "))] = montant
+    return ligne
+
+
+def journal_des_encaissements(jour: str, mouvements, recapitulatif) -> Workbook:
+    """Journal des encaissements d'une journée, ventilé par mode de paiement.
+
+    Reproduit la structure réelle : bloc d'en-tête portant la période, table des
+    mouvements, bloc RECAPITULATIF qui annonce ses propres totaux, note et pagination.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "A"
+
+    ws["B1"] = (
+        f"Journal des  encaissements \nPériode du {jour} au {jour} Facturé et encaissé\n"
+        "HOTEL EXEMPLE SA\n"
+    )
+    ws.append([])
+    for colonne, valeur in enumerate(["Mouvement"] + MODES, start=1):
+        ws.cell(row=2, column=colonne, value=valeur)
+
+    for ligne in mouvements:
+        ws.append(ligne)
+
+    ws.append(["RECAPITULATIF"] + MODES)
+    for libelle, total, om in recapitulatif:
+        ligne = [libelle] + [None] * len(MODES)
+        ligne[1] = total
+        ligne[1 + COL_OM] = om
+        ws.append(ligne)
+    ws.append([None, None, None, None, "Total facturé : exemple"])
+    ws.append([None] * 18 + ["1/1"])
+    return wb
+
+
+def journal_12_mai() -> Workbook:
+    """Journée qui se rapproche entièrement, avec un regroupement de deux factures."""
+    mouvements = [
+        _mouvement("H-1001 50 000 FCFA # 101 ENTREPRISE", 50000, Espèces=50000),
+        _mouvement("KOT-2001 2 000 FCFA T 1", 2000, Orange_Money=2000),
+        _mouvement("KOT-2002 1 500 FCFA T 2", 1500, Orange_Money=1500),
+        _mouvement("BAL-3001 12 000 FCFA MB 4", 12000, Orange_Money=12000),
+        _mouvement("Réservation N°9001 13/05/26  ALPHA Arrhes  M. ALPHA Jean", 75000, Orange_Money=75000),
+        _mouvement("Réservation N°9002 13/05/26  BETA Arrhes  Mme BETA Claire", 120500, Orange_Money=120500),
+        _mouvement("Réservation N°9003 14/05/26  GAMMA Arrhes  M. GAMMA Paul", 75000, Orange_Money=75000),
+        _mouvement("Réservation N°9004 14/05/26  DELTA Arrhes  Mme DELTA Sophie", 40000, Virement_Bancaire=40000),
+    ]
+    recapitulatif = [
+        ("Encaissement de factures", 65500, 15500),
+        ("Encaissement d'arrhes", 310500, 270500),
+        ("Total période *", 376000, 286000),
+    ]
+    return journal_des_encaissements("12/05/2026", mouvements, recapitulatif)
+
+
+def journal_18_mai() -> Workbook:
+    """Journée simple, un seul encaissement Orange Money."""
+    mouvements = [
+        _mouvement("BAL-3002 9 000 FCFA MB 1", 9000, Orange_Money=9000),
+        _mouvement("H-1002 20 000 FCFA # 102 CLIENT", 20000, Espèces=20000),
+    ]
+    recapitulatif = [
+        ("Encaissement de factures", 29000, 9000),
+        ("Total période *", 29000, 9000),
+    ]
+    return journal_des_encaissements("18/05/2026", mouvements, recapitulatif)
+
+
 if __name__ == "__main__":
-    journal_des_arrhes().save(ICI / "journal_arrhes_exemple.xlsx")
     releve_orange_money().save(ICI / "releve_om_exemple.xlsx")
+    journal_12_mai().save(ICI / "encaissements_12-05-2026.xlsx")
+    journal_18_mai().save(ICI / "encaissements_18-05-2026.xlsx")
     print("fixtures générées dans", ICI)

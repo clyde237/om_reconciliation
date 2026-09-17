@@ -147,12 +147,22 @@ def ventiler_par_compte(
 
 
 def generer_synthese_mensuelle(
-    resultats: Union[ResultatRapprochement, Sequence[ResultatRapprochement]],
+    resultats: Union[ResultatRapprochement, Sequence[ResultatRapprochement], Any],
     periode_libelle: str = "",
 ) -> SyntheseMensuelle:
     """Génère la synthèse mensuelle consolidée."""
-    liste_res = [resultats] if isinstance(resultats, ResultatRapprochement) else list(resultats)
-    if not liste_res:
+    non_couvertes = []
+    if hasattr(resultats, "journees") and hasattr(resultats, "non_couvertes"):
+        liste_res = list(resultats.journees)
+        if not periode_libelle:
+            periode_libelle = resultats.periode.libelle
+        non_couvertes = list(resultats.non_couvertes)
+    elif isinstance(resultats, ResultatRapprochement):
+        liste_res = [resultats]
+    else:
+        liste_res = list(resultats)
+
+    if not liste_res and not non_couvertes:
         raise ValueError("Au moins un ResultatRapprochement est requis pour générer la synthèse.")
 
     if not periode_libelle:
@@ -196,6 +206,20 @@ def generer_synthese_mensuelle(
                 total_recette=c_j.total_recette_du_jour,
                 total_ecarts=c_j.montant_ecarts,
                 statut_global=statut_global,
+            )
+        )
+    for nc in non_couvertes:
+        details_journaliers.append(
+            SyntheseJournaliere(
+                jour=nc.jour,
+                nb_arrhes=0,
+                total_arrhes=ZERO,
+                nb_om=nc.nb_transactions,
+                total_om=nc.total,
+                total_rapproche=ZERO,
+                total_recette=nc.total,
+                total_ecarts=ZERO,
+                statut_global="NON COUVERTE (SANS JOURNAL)",
             )
         )
 

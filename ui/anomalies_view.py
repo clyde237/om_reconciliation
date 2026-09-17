@@ -27,6 +27,9 @@ def render_anomalies_view():
     if resultat is None:
         return
 
+    session.selecteur_de_journee("journee_anomalies")
+    resultat = session.resultat()
+
     journal_dec = session.decisions()
     verrou = GestionnaireVerrou.evaluer(resultat, journal_dec)
 

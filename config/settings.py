@@ -24,6 +24,7 @@ INPUT_DIR = _chemin("DATA_INPUT_DIR", DATA_DIR / "input")
 OUTPUT_DIR = _chemin("DATA_OUTPUT_DIR", DATA_DIR / "output")
 TEMPLATES_DIR = _chemin("DATA_TEMPLATES_DIR", DATA_DIR / "templates")
 
+JOURNAUX_ENCAISSEMENTS_DIR = INPUT_DIR / "journaux_encaissements"
 JOURNAL_ARRHES_DIR = INPUT_DIR / "journal_arrhes"
 RELEVES_OM_DIR = INPUT_DIR / "releves_om"
 ASSETS_DIR = BASE_DIR / "assets"
@@ -74,3 +75,12 @@ OM_COLUMN_ALIASES: dict[str, frozenset[str]] = {
     "commission_compte": frozenset({"COMMISSIONS (XAF) COMPTE"}),
     "commission": frozenset({"COMMISSIONS (XAF) SOUS-RESEAU", "SOUS-RESEAU"}),
 }
+
+
+# --- Journal des encaissements -------------------------------------------------
+#
+# Le journal ventile chaque encaissement par mode de paiement, une colonne par mode.
+# La colonne ci-dessous délimite à elle seule le périmètre du rapprochement.
+
+ENCAISSEMENTS_MODE_OM = "Orange Money"
+ENCAISSEMENTS_COLONNE_LIBELLE = "Mouvement"

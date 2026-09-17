@@ -17,6 +17,9 @@ def render_reconciliation_view():
     if resultat is None:
         return
 
+    session.selecteur_de_journee("journee_rapprochement", autoriser_toutes=True)
+    resultat = session.resultat()
+
     # --- Barre de filtres multi-critères (Phase 6) ---
     col_f1, col_f2 = st.columns([1, 2])
     with col_f1:
@@ -79,18 +82,69 @@ def render_reconciliation_view():
             continue
         manquants_affiches.append(l)
 
+    # Préparation du téléchargement du tableau de rapprochement
+    from src.analysis.reconciliation import construire_table
+    from src.matching.appariement import ResultatRapprochement
+    from src.reports import generer_excel_rapprochement_colore
+
+    est_filtre = (filtre_compte != "Tous les comptes") or bool(q)
+    if est_filtre:
+        res_export = ResultatRapprochement(
+            periode=resultat.periode,
+            appariements=appariements_affiches,
+            recette_du_jour=recette_affichee,
+            arrhes_sans_om=manquants_affiches,
+        )
+        lignes_export = construire_table(res_export)
+    else:
+        lignes_export = resultat
+
+    total_affiches = len(appariements_affiches) + len(recette_affichee) + len(manquants_affiches)
+    jour_choisi = session.journee_selectionnee()
+    if jour_choisi == "TOUTES":
+        nom_fichier = f"Rapprochement_Toutes_Journees_{resultat.periode.libelle.replace(' ', '_').replace('/', '-')}.xlsx"
+        caption_texte = (
+            f"📅 **Toutes les journées ({resultat.periode.libelle})** — **{total_affiches}** opération(s) affichée(s) "
+            f"({len(appariements_affiches)} rapprochée(s), "
+            f"{len(recette_affichee)} orpheline(s), "
+            f"{len(manquants_affiches)} non retrouvée(s))"
+        )
+    else:
+        nom_fichier = f"Rapprochement_{resultat.periode.libelle.replace(' ', '_').replace('/', '-')}.xlsx"
+        caption_texte = (
+            f"📅 Journée du **{resultat.periode.libelle}** — **{total_affiches}** opération(s) affichée(s) "
+            f"({len(appariements_affiches)} rapprochée(s), "
+            f"{len(recette_affichee)} orpheline(s), "
+            f"{len(manquants_affiches)} non retrouvée(s))"
+        )
+
+    col_info, col_dl = st.columns([3, 2])
+    with col_info:
+        st.caption(caption_texte)
+    with col_dl:
+        st.download_button(
+            label="📥 Télécharger le rapprochement Excel (.xlsx)",
+            data=generer_excel_rapprochement_colore(lignes_export),
+            file_name=nom_fichier,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            help="Exporte les 7 colonnes : Date, Client, Référence OM, Montant journal, Montant OM, Statut, Observation, avec surbrillances vert / jaune / rouge.",
+            use_container_width=True,
+            disabled=total_affiches == 0,
+        )
+
     # Onglets d'affichage
     onglet_apparies, onglet_recette, onglet_manquants = st.tabs(
         [
-            f"Arrhes rapprochées ({len(resultat.appariements)})",
-            f"Recette du jour ({len(resultat.recette_du_jour)})",
-            f"Arrhes sans encaissement ({len(resultat.arrhes_sans_om)})",
+            f"Encaissements rapprochés ({len(resultat.appariements)})",
+            f"Flux OM orphelins ({len(resultat.recette_du_jour)})",
+            f"Journal sans flux OM ({len(resultat.arrhes_sans_om)})",
         ]
     )
 
     with onglet_apparies:
         if not appariements_affiches:
-            st.caption("Aucune arrhe rapprochée ne correspond aux filtres sélectionnés.")
+            st.caption("Aucun encaissement rapproché ne correspond aux filtres sélectionnés.")
         else:
             st.dataframe(
                 [
@@ -137,14 +191,14 @@ def render_reconciliation_view():
             )
             st.info(
                 f"Ces {len(resultat.recette_du_jour)} encaissement(s), "
-                f"{format_amount(resultat.total_recette_du_jour)} FCFA au total, ne sont pas "
-                "des manquants : le journal des arrhes n'enregistre que les arrhes, "
-                "le reste est la recette ordinaire du jour."
+                f"{format_amount(resultat.total_recette_du_jour)} FCFA au total, correspondent "
+                "à des flux Orange Money du relevé non identifiés dans les journaux des encaissements "
+                "(recette ordinaire du jour)."
             )
 
     with onglet_manquants:
         if not manquants_affiches:
-            st.caption("Aucune arrhe sans encaissement ne correspond aux filtres sélectionnés.")
+            st.caption("Aucune ligne du journal sans encaissement ne correspond aux filtres sélectionnés.")
         else:
             st.dataframe(
                 [
@@ -161,6 +215,6 @@ def render_reconciliation_view():
                 width="stretch",
             )
             st.warning(
-                "Arrhes enregistrées au journal sans encaissement Orange Money "
+                "Encaissements enregistrés au journal sans flux Orange Money "
                 "correspondant. Statut bloquant : l'export reste fermé."
             )
