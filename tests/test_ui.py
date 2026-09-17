@@ -159,3 +159,34 @@ def test_la_vue_export_reste_fermee():
     app = _app("📑 Export Comptable Sage")
     assert not app.exception
     assert any(bouton.disabled for bouton in app.button)
+
+
+def test_upload_avec_archive_zip(tmp_path):
+    """Vérifie que l'interface accepte et déballe une archive ZIP de journaux."""
+    import io
+    import zipfile
+
+    # Créer un zip contenant les deux fixtures de journaux
+    tampon_zip = io.BytesIO()
+    with zipfile.ZipFile(tampon_zip, "w") as zf:
+        for nom in JOURNAUX:
+            zf.writestr(nom, (FIXTURES / nom).read_bytes())
+
+    app = AppTest.from_file(str(RACINE / "app.py"), default_timeout=30).run()
+    app.sidebar.radio[0].set_value("📥 Importation & Données").run()
+
+    # Téléverser l'archive zip et le relevé OM
+    app.file_uploader(key="upload_encaissements").upload("journaux.zip", tampon_zip.getvalue()).run()
+    app.file_uploader(key="upload_om").upload(
+        "releve_om_exemple.xlsx", (FIXTURES / "releve_om_exemple.xlsx").read_bytes()
+    ).run()
+
+    assert not app.exception
+    btn = [b for b in app.button if "Lancer" in b.label][0]
+    assert not btn.disabled
+    btn.click().run()
+
+    assert not app.exception
+    contenu = _texte(app)
+    assert "2 journée(s) contrôlée(s)" in contenu
+

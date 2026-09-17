@@ -188,3 +188,28 @@ def test_lecture_journal_consolide_mensuel_avec_sections(tmp_path):
     assert ventiles[0].periode.debut == date(2026, 5, 5)
     assert ventiles[1].periode.debut == date(2026, 5, 25)
 
+
+def test_regularisations_annulees(tmp_path):
+    """Les régularisations internes (+ et - pour la même arrhe) doivent s'annuler."""
+    from openpyxl import Workbook
+
+    chemin = tmp_path / "encaissements_regul.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "Journal des encaissements\nPériode du 12/04/2026 au 12/04/2026"
+    ws.append([])
+    ws.append(["Mouvement", "Total", "Orange Money"])
+    ws.append(["Facture H-7001 50 000 FCFA", 50000, 50000])
+    ws.append(["Réservation N°8015 10/04/26 Régul Arrhes", -150000, -150000])
+    ws.append(["Réservation N°8015 10/04/26 Arrhes Régul", 150000, 150000])
+    ws.append(["TOTAL PERIODE", None, 50000])
+    wb.save(chemin)
+
+    lecture = EncaissementsReader(chemin, nom_source="mon_journal.xlsx").read()
+    assert lecture.source == "mon_journal.xlsx"
+    assert len(lecture.mouvements) == 1
+    assert lecture.mouvements[0].montant_om == Decimal("50000")
+    assert lecture.total_om == Decimal("50000")
+    assert lecture.ecart_au_recapitulatif() == Decimal("0")
+
+
