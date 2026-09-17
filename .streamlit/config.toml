@@ -4,7 +4,9 @@ gatherUsageStats = false
 
 [server]
 headless = true
-maxUploadSize = 50
+maxUploadSize = 200
+enableXsrfProtection = false
+enableCORS = false
 # Écoute uniquement le poste : sans cette ligne, Streamlit publie l'application
 # sur le réseau local et affiche une URL externe au démarrage.
 address = "localhost"
