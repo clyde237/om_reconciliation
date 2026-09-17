@@ -12,6 +12,7 @@ ligne, puis un bloc « RECAPITULATIF », une note de bas de page et une paginati
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Optional, Union
 
@@ -217,8 +218,9 @@ class LectureEncaissements:
 class EncaissementsReader:
     """Charge un journal des encaissements et en extrait la part Orange Money et MTN MoMo."""
 
-    def __init__(self, filepath: Union[str, Path]):
+    def __init__(self, filepath: Union[str, Path], nom_source: Optional[str] = None):
         self.filepath = Path(filepath)
+        self.nom_source = nom_source or self.filepath.name
 
     def read(self) -> LectureEncaissements:
         if not self.filepath.exists():
@@ -261,7 +263,9 @@ class EncaissementsReader:
                 continue
 
             if est_multi_jours:
-                date_section = self._extraire_date_section(ligne, colonne_om, colonne_momo)
+                date_section = self._extraire_date_section(
+                    ligne, colonne_om, colonne_momo, periode_limite=periode
+                )
                 if date_section:
                     date_section_courante = date_section
 
@@ -277,6 +281,8 @@ class EncaissementsReader:
                 periode_limite=periode if est_multi_jours else None,
             )
 
+        lot.retenues = self._nettoyer_regularisations(lot.retenues)
+
         return LectureEncaissements(
             periode=periode,
             lot=lot,
@@ -285,8 +291,41 @@ class EncaissementsReader:
             total_declare_momo=recapitulatif_momo.get("total", ZERO),
             total_declare_arrhes=recapitulatif_om.get("arrhes", ZERO),
             total_declare_factures=recapitulatif_om.get("factures", ZERO),
-            source=self.filepath.name,
+            source=self.nom_source,
         )
+
+    @staticmethod
+    def _nettoyer_regularisations(
+        mouvements: list[MouvementEncaissement],
+    ) -> list[MouvementEncaissement]:
+        """Annule les régularisations internes et leurs contreparties de même montant."""
+        positives = [m for m in mouvements if m.montant_om > ZERO]
+        negatives = [m for m in mouvements if m.montant_om < ZERO]
+        if not negatives:
+            return mouvements
+
+        reste_pos = list(positives)
+        reste_neg = list(negatives)
+
+        i_neg = len(reste_neg) - 1
+        while i_neg >= 0:
+            neg = reste_neg[i_neg]
+            for idx, pos in enumerate(reste_pos):
+                if (
+                    normalize_key(pos.mode_paiement) == normalize_key(neg.mode_paiement)
+                    and pos.montant_om == -neg.montant_om
+                ):
+                    if (
+                        (pos.reference and pos.reference == neg.reference)
+                        or ("REGUL" in pos.libelle.upper() and "REGUL" in neg.libelle.upper())
+                        or ("REGUL" in neg.libelle.upper())
+                    ):
+                        reste_pos.pop(idx)
+                        reste_neg.pop(i_neg)
+                        break
+            i_neg -= 1
+
+        return sorted(reste_pos + reste_neg, key=lambda m: m.ligne_source)
 
     # --- en-tête ---------------------------------------------------------------
 
@@ -353,26 +392,33 @@ class EncaissementsReader:
         ligne: tuple,
         colonne_om: Optional[int] = None,
         colonne_momo: Optional[int] = None,
+        periode_limite: Optional[Periode] = None,
     ) -> Optional[date]:
         """Détecte une ligne de rupture/séparateur de journée dans un journal multi-jours."""
-        for col in (colonne_om, colonne_momo):
-            if col is not None and col < len(ligne) and ligne[col] not in (None, "", 0):
+        # Si une colonne contient un montant numérique non nul, ce n'est PAS un séparateur de section
+        for index, cel in enumerate(ligne):
+            if index > 0 and isinstance(cel, (int, float, Decimal)) and cel != 0:
                 return None
+
         cellules_non_vides = [c for c in ligne if c not in (None, "")]
         if not (1 <= len(cellules_non_vides) <= 3):
             return None
         for c in cellules_non_vides:
             if isinstance(c, (datetime, date)):
-                return parse_date(c)
+                d = parse_date(c)
+                if periode_limite is None or periode_limite.contient(d):
+                    return d
             texte = str(c).strip()
             m = re.search(
-                r"(?:journ[ée]e|date|du)?\s*(?:du|:)?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+                r"^(?:journ[ée]e|date)?\s*(?:du|:)?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})$",
                 texte,
                 re.IGNORECASE,
             )
             if m:
                 try:
-                    return parse_date(m.group(1))
+                    d = parse_date(m.group(1))
+                    if periode_limite is None or periode_limite.contient(d):
+                        return d
                 except Exception:
                     pass
         return None
@@ -449,7 +495,7 @@ class EncaissementsReader:
             if brut_om not in (None, "", 0):
                 try:
                     montant_om = parse_amount(brut_om)
-                    if montant_om > ZERO:
+                    if montant_om != ZERO:
                         lot.retenues.append(
                             MouvementEncaissement(
                                 ligne_source=numero,
@@ -471,7 +517,7 @@ class EncaissementsReader:
             if brut_momo not in (None, "", 0):
                 try:
                     montant_momo = parse_amount(brut_momo)
-                    if montant_momo > ZERO:
+                    if montant_momo != ZERO:
                         ref_col = colonne_momo if colonne_om is None else min(colonne_om, colonne_momo)
                         lot.retenues.append(
                             MouvementEncaissement(

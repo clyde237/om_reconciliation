@@ -1,4 +1,7 @@
-"""Vue de téléversement et lancement du contrôle mensuel."""
+import io
+import tempfile
+import zipfile
+from pathlib import Path
 
 import streamlit as st
 
@@ -7,6 +10,31 @@ from src.normalization.amounts import format_amount
 from src.readers import EncaissementsReader, MomoReader, OMReader
 from ui import session
 from ui.components import render_header
+
+
+def _deballer_journaux(fichiers_televerses) -> list[tuple[str, bytes]]:
+    """Déballe les fichiers téléversés, en extrayant les archives .zip éventuelles."""
+    resultats = []
+    for fichier in fichiers_televerses:
+        nom = fichier.name
+        octets = fichier.getvalue() if hasattr(fichier, "getvalue") else fichier.read()
+        if nom.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(octets)) as zf:
+                    for info in sorted(zf.infolist(), key=lambda x: x.filename):
+                        if info.is_dir():
+                            continue
+                        nom_sous = Path(info.filename).name
+                        if nom_sous.startswith(("~", ".", "._")) or not nom_sous.lower().endswith(
+                            (".xlsx", ".xls")
+                        ):
+                            continue
+                        resultats.append((nom_sous, zf.read(info.filename)))
+            except Exception:
+                resultats.append((nom, octets))
+        else:
+            resultats.append((nom, octets))
+    return resultats
 
 
 def render_upload_view():
@@ -21,13 +49,17 @@ def render_upload_view():
     with colonne_journaux:
         st.subheader("1. Journaux des encaissements")
         journaux = st.file_uploader(
-            "Un journal par journée ou consolidé mensuel",
-            type=["xlsx", "xls"],
+            "Journaux quotidiens, consolidé ou archive ZIP (.zip, .xlsx, .xls)",
+            type=["xlsx", "xls", "zip"],
             accept_multiple_files=True,
             key="upload_encaissements",
         )
         if journaux:
-            st.caption(f"{len(journaux)} journal/journaux sélectionné(s)")
+            fichiers_prets = _deballer_journaux(journaux)
+            if any(f.name.lower().endswith(".zip") for f in journaux):
+                st.success(f"📦 Archive ZIP : {len(fichiers_prets)} journal/journaux extrait(s)")
+            else:
+                st.caption(f"{len(fichiers_prets)} journal/journaux sélectionné(s)")
 
     with colonne_om:
         st.subheader("2. Relevé Orange Money")
@@ -52,7 +84,7 @@ def render_upload_view():
 
     manquants = []
     if not journaux:
-        manquants.append("au moins un journal des encaissements")
+        manquants.append("au moins un journal des encaissements (ou une archive ZIP)")
     if fichier_om is None:
         manquants.append("le relevé Orange Money")
     if manquants:
@@ -74,16 +106,23 @@ def render_upload_view():
 def _lancer(journaux, fichier_om, fichier_momo=None) -> None:
     with st.status("Contrôle en cours…", expanded=True) as etat:
         try:
-            st.write(f"Lecture de {len(journaux)} journal/journaux…")
+            fichiers_extraits = _deballer_journaux(journaux)
+            st.write(f"Lecture de {len(fichiers_extraits)} journal/journaux…")
             lectures, illisibles = [], []
             barre = st.progress(0.0)
-            for rang, fichier in enumerate(journaux, start=1):
+            for rang, (nom, octets) in enumerate(fichiers_extraits, start=1):
                 try:
-                    with session.fichier_temporaire(fichier) as chemin:
-                        lectures.append(EncaissementsReader(chemin).read())
+                    suffixe = Path(nom).suffix or ".xlsx"
+                    with tempfile.NamedTemporaryFile(suffix=suffixe, delete=False) as tampon:
+                        tampon.write(octets)
+                        chemin = Path(tampon.name)
+                    try:
+                        lectures.append(EncaissementsReader(chemin, nom_source=nom).read())
+                    finally:
+                        chemin.unlink(missing_ok=True)
                 except Exception as erreur:  # noqa: BLE001
-                    illisibles.append((fichier.name, str(erreur)))
-                barre.progress(rang / len(journaux))
+                    illisibles.append((nom, str(erreur)))
+                barre.progress(rang / len(fichiers_extraits))
 
             if not lectures:
                 raise ValueError(
@@ -133,7 +172,7 @@ def _rapport_import() -> None:
 
     if mensuel.doublons_de_journee:
         for jour, fichiers in mensuel.doublons_de_journee.items():
-            st.error(
+            st.warning(
                 f"La journée du {jour:%d/%m/%Y} a été déposée plusieurs fois "
                 f"({', '.join(fichiers)}). Seul le premier journal a été retenu."
             )
@@ -157,8 +196,8 @@ def _rapport_import() -> None:
         )
         ecarts = [l for l in journaux if l.ecart_au_recapitulatif()]
         if ecarts:
-            st.error(
-                "Lecture incomplète (OM) : "
+            st.warning(
+                "Écart avec le récapitulatif (OM) : "
                 + ", ".join(
                     f"{l.source} (écart {format_amount(l.ecart_au_recapitulatif())})"
                     for l in ecarts
