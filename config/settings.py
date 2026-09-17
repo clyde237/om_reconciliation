@@ -83,4 +83,12 @@ OM_COLUMN_ALIASES: dict[str, frozenset[str]] = {
 # La colonne ci-dessous délimite à elle seule le périmètre du rapprochement.
 
 ENCAISSEMENTS_MODE_OM = "Orange Money"
+ENCAISSEMENTS_MODE_MOMO = "MTN Mobile Money"
 ENCAISSEMENTS_COLONNE_LIBELLE = "Mouvement"
+
+MOMO_COLUMN_ALIASES = frozenset({
+    "MTN MOBILE MONEY",
+    "MTN MOMO",
+    "MOMO",
+    "MOBILE MONEY",
+})

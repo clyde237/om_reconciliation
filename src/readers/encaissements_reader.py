@@ -17,8 +17,19 @@ from typing import Any, Iterable, Optional, Union
 
 from openpyxl import load_workbook
 
-from config.settings import ENCAISSEMENTS_MODE_OM, ENCAISSEMENTS_COLONNE_LIBELLE
-from src.models import LigneJournal, LotImport, Periode
+from config.settings import (
+    ENCAISSEMENTS_COLONNE_LIBELLE,
+    ENCAISSEMENTS_MODE_MOMO,
+    ENCAISSEMENTS_MODE_OM,
+    MOMO_COLUMN_ALIASES,
+)
+from src.models import (
+    MODE_MTN_MOMO,
+    MODE_ORANGE_MONEY,
+    LigneJournal,
+    LotImport,
+    Periode,
+)
 from src.normalization.amounts import ZERO, AmountParseError, normalize_amount, parse_amount
 from src.normalization.dates import DateParseError, parse_date
 from src.normalization.text import clean_text, normalize_key
@@ -43,7 +54,7 @@ PROFONDEUR_ENTETE = 6
 
 @dataclass(frozen=True)
 class MouvementEncaissement:
-    """Une ligne du journal, ramenée à sa part Orange Money."""
+    """Une ligne du journal, ramenée à sa part mobile money (Orange Money ou MTN MoMo)."""
 
     ligne_source: int
     libelle: str
@@ -52,6 +63,11 @@ class MouvementEncaissement:
     montant_total: object
     est_arrhe: bool
     date_mouvement: Optional[date] = None
+    mode_paiement: str = MODE_ORANGE_MONEY
+
+    @property
+    def montant(self) -> object:
+        return self.montant_om
 
     @property
     def nature(self) -> str:
@@ -67,6 +83,7 @@ class LectureEncaissements:
     periode_deduite: bool = False
     #: Totaux annoncés par le bloc « RECAPITULATIF », pour contrôle.
     total_declare_om: object = ZERO
+    total_declare_momo: object = ZERO
     total_declare_arrhes: object = ZERO
     total_declare_factures: object = ZERO
     source: str = ""
@@ -76,8 +93,22 @@ class LectureEncaissements:
         return self.lot.retenues
 
     @property
+    def mouvements_om(self) -> list[MouvementEncaissement]:
+        return [
+            m for m in self.mouvements
+            if normalize_key(m.mode_paiement) == normalize_key(MODE_ORANGE_MONEY)
+        ]
+
+    @property
+    def mouvements_momo(self) -> list[MouvementEncaissement]:
+        return [
+            m for m in self.mouvements
+            if normalize_key(m.mode_paiement) == normalize_key(MODE_MTN_MOMO)
+        ]
+
+    @property
     def lignes_orange_money(self) -> list[LigneJournal]:
-        """Le périmètre du rapprochement, au format canonique attendu par le moteur."""
+        """Le périmètre du rapprochement (OM + MoMo), au format canonique attendu par le moteur."""
         from datetime import datetime
 
         jour_defaut = self.periode.debut
@@ -90,7 +121,7 @@ class LectureEncaissements:
                     (mouvement.date_mouvement or jour_defaut).day,
                 ),
                 client=mouvement.libelle,
-                mode_paiement="Orange Money",
+                mode_paiement=mouvement.mode_paiement,
                 montant=mouvement.montant_om,
                 reference_interne=mouvement.reference,
                 libelle=mouvement.libelle,
@@ -98,6 +129,10 @@ class LectureEncaissements:
             )
             for mouvement in self.mouvements
         ]
+
+    @property
+    def lignes_mobile_money(self) -> list[LigneJournal]:
+        return self.lignes_orange_money
 
     def ventiler_par_jour(self) -> list["LectureEncaissements"]:
         """Ventile une lecture multi-jours en lectures journalières individuelles.
@@ -120,7 +155,14 @@ class LectureEncaissements:
         for jour in sorted(mouvements_par_jour):
             lot = LotImport()
             lot.retenues = list(mouvements_par_jour[jour])
-            total_om = sum((m.montant_om for m in lot.retenues), ZERO)
+            total_om = sum(
+                (m.montant_om for m in lot.retenues if normalize_key(m.mode_paiement) == normalize_key(MODE_ORANGE_MONEY)),
+                ZERO,
+            )
+            total_momo = sum(
+                (m.montant_om for m in lot.retenues if normalize_key(m.mode_paiement) == normalize_key(MODE_MTN_MOMO)),
+                ZERO,
+            )
             total_arrhes = sum((m.montant_om for m in lot.retenues if m.est_arrhe), ZERO)
             total_factures = sum((m.montant_om for m in lot.retenues if not m.est_arrhe), ZERO)
             lectures.append(
@@ -129,6 +171,7 @@ class LectureEncaissements:
                     lot=lot,
                     periode_deduite=self.periode_deduite,
                     total_declare_om=total_om,
+                    total_declare_momo=total_momo,
                     total_declare_arrhes=total_arrhes,
                     total_declare_factures=total_factures,
                     source=f"{self.source} ({jour.strftime('%d/%m/%Y')})",
@@ -138,7 +181,21 @@ class LectureEncaissements:
 
     @property
     def total_om(self):
-        return sum((mouvement.montant_om for mouvement in self.mouvements), ZERO)
+        return sum(
+            (m.montant_om for m in self.mouvements if normalize_key(m.mode_paiement) == normalize_key(MODE_ORANGE_MONEY)),
+            ZERO,
+        )
+
+    @property
+    def total_momo(self):
+        return sum(
+            (m.montant_om for m in self.mouvements if normalize_key(m.mode_paiement) == normalize_key(MODE_MTN_MOMO)),
+            ZERO,
+        )
+
+    @property
+    def total_mobile_money(self):
+        return sum((m.montant_om for m in self.mouvements), ZERO)
 
     @property
     def total_arrhes(self):
@@ -149,16 +206,16 @@ class LectureEncaissements:
         return sum((m.montant_om for m in self.mouvements if not m.est_arrhe), ZERO)
 
     def ecart_au_recapitulatif(self):
-        """Écart entre les lignes lues et le total que le fichier annonce lui-même.
-
-        Un écart non nul signale une lecture incomplète : le fichier porte sa propre
-        vérification, autant s'en servir.
-        """
+        """Écart entre les lignes lues et le total que le fichier annonce lui-même pour OM."""
         return self.total_om - self.total_declare_om
+
+    def ecart_au_recapitulatif_momo(self):
+        """Écart entre les lignes lues et le total que le fichier annonce lui-même pour MoMo."""
+        return self.total_momo - self.total_declare_momo
 
 
 class EncaissementsReader:
-    """Charge un journal des encaissements et en extrait la part Orange Money."""
+    """Charge un journal des encaissements et en extrait la part Orange Money et MTN MoMo."""
 
     def __init__(self, filepath: Union[str, Path]):
         self.filepath = Path(filepath)
@@ -174,12 +231,13 @@ class EncaissementsReader:
         finally:
             classeur.close()
 
-        rang_entete, colonne_om, colonne_libelle, colonne_date = self._trouver_entete(lignes)
+        rang_entete, colonne_om, colonne_momo, colonne_libelle, colonne_date = self._trouver_entete(lignes)
         periode, deduite = self._periode(lignes[:rang_entete])
         est_multi_jours = (periode.debut != periode.fin)
 
         lot = LotImport()
-        recapitulatif: dict[str, Any] = {}
+        recapitulatif_om: dict[str, Any] = {}
+        recapitulatif_momo: dict[str, Any] = {}
         dans_recapitulatif = False
         date_section_courante: Optional[date] = None
 
@@ -198,12 +256,12 @@ class EncaissementsReader:
                 dans_recapitulatif = True
 
             if dans_recapitulatif:
-                self._collecter_recapitulatif(libelle, ligne, colonne_om, recapitulatif)
+                self._collecter_recapitulatif(libelle, ligne, colonne_om, colonne_momo, recapitulatif_om, recapitulatif_momo)
                 lot.rejeter(numero, "bloc Récapitulatif")
                 continue
 
             if est_multi_jours:
-                date_section = self._extraire_date_section(ligne, colonne_om)
+                date_section = self._extraire_date_section(ligne, colonne_om, colonne_momo)
                 if date_section:
                     date_section_courante = date_section
 
@@ -211,6 +269,7 @@ class EncaissementsReader:
                 numero,
                 ligne,
                 colonne_om,
+                colonne_momo,
                 libelle,
                 lot,
                 colonne_date=colonne_date if est_multi_jours else None,
@@ -222,26 +281,43 @@ class EncaissementsReader:
             periode=periode,
             lot=lot,
             periode_deduite=deduite,
-            total_declare_om=recapitulatif.get("total", ZERO),
-            total_declare_arrhes=recapitulatif.get("arrhes", ZERO),
-            total_declare_factures=recapitulatif.get("factures", ZERO),
+            total_declare_om=recapitulatif_om.get("total", ZERO),
+            total_declare_momo=recapitulatif_momo.get("total", ZERO),
+            total_declare_arrhes=recapitulatif_om.get("arrhes", ZERO),
+            total_declare_factures=recapitulatif_om.get("factures", ZERO),
             source=self.filepath.name,
         )
 
     # --- en-tête ---------------------------------------------------------------
 
-    def _trouver_entete(self, lignes: list[tuple]) -> tuple[int, int, int, Optional[int]]:
-        """Localise la ligne d'en-tête, la colonne OM, le libellé et l'éventuelle colonne date."""
-        cible = normalize_key(ENCAISSEMENTS_MODE_OM)
+    def _trouver_entete(
+        self, lignes: list[tuple]
+    ) -> tuple[int, Optional[int], Optional[int], int, Optional[int]]:
+        """Localise la ligne d'en-tête, les colonnes OM et MoMo, le libellé et l'éventuelle colonne date."""
+        cible_om = normalize_key(ENCAISSEMENTS_MODE_OM)
+        cible_momo = normalize_key(ENCAISSEMENTS_MODE_MOMO)
+        alias_momo = {normalize_key(a) for a in MOMO_COLUMN_ALIASES} | {cible_momo}
+
         for rang, ligne in enumerate(lignes[:PROFONDEUR_ENTETE]):
+            col_om = None
+            col_momo = None
             for index, cellule in enumerate(ligne):
-                if normalize_key(cellule) == cible:
-                    libelle = self._colonne_libelle(ligne)
-                    colonne_date = self._colonne_date(ligne)
-                    return rang, index, libelle, colonne_date
+                if cellule is None:
+                    continue
+                cle = normalize_key(str(cellule))
+                if cle == cible_om:
+                    col_om = index
+                elif cle in alias_momo:
+                    col_momo = index
+
+            if col_om is not None or col_momo is not None:
+                libelle = self._colonne_libelle(ligne)
+                colonne_date = self._colonne_date(ligne)
+                return rang, col_om, col_momo, libelle, colonne_date
+
         raise ValueError(
-            f"Colonne « {ENCAISSEMENTS_MODE_OM} » introuvable dans les "
-            f"{PROFONDEUR_ENTETE} premières lignes de {self.filepath.name}. "
+            f"Colonnes « {ENCAISSEMENTS_MODE_OM} » / « {ENCAISSEMENTS_MODE_MOMO} » introuvables "
+            f"dans les {PROFONDEUR_ENTETE} premières lignes de {self.filepath.name}. "
             "S'agit-il bien d'un journal des encaissements ?"
         )
 
@@ -273,10 +349,15 @@ class EncaissementsReader:
     # --- lignes ----------------------------------------------------------------
 
     @staticmethod
-    def _extraire_date_section(ligne: tuple, colonne_om: int) -> Optional[date]:
+    def _extraire_date_section(
+        ligne: tuple,
+        colonne_om: Optional[int] = None,
+        colonne_momo: Optional[int] = None,
+    ) -> Optional[date]:
         """Détecte une ligne de rupture/séparateur de journée dans un journal multi-jours."""
-        if colonne_om < len(ligne) and ligne[colonne_om] not in (None, "", 0):
-            return None
+        for col in (colonne_om, colonne_momo):
+            if col is not None and col < len(ligne) and ligne[col] not in (None, "", 0):
+                return None
         cellules_non_vides = [c for c in ligne if c not in (None, "")]
         if not (1 <= len(cellules_non_vides) <= 3):
             return None
@@ -348,47 +429,69 @@ class EncaissementsReader:
         self,
         numero: int,
         ligne: tuple,
-        colonne_om: int,
+        colonne_om: Optional[int],
+        colonne_momo: Optional[int],
         libelle: str,
         lot: LotImport,
         colonne_date: Optional[int] = None,
         date_fallback: Optional[date] = None,
         periode_limite: Optional[Periode] = None,
     ) -> None:
-        brut = ligne[colonne_om] if colonne_om < len(ligne) else None
-        if brut in (None, "", 0):
-            return  # ligne réglée par un autre mode : hors périmètre, pas une anomalie
-
-        try:
-            montant = parse_amount(brut)
-        except AmountParseError as erreur:
-            lot.rejeter(numero, f"montant Orange Money illisible ({erreur})")
-            return
-        if montant == ZERO:
-            return
-
         date_mvt = None
         if date_fallback is not None:
             date_mvt = self._extraire_date_mouvement(
                 ligne, colonne_date, libelle, date_fallback, periode_limite
             )
 
-        lot.retenues.append(
-            MouvementEncaissement(
-                ligne_source=numero,
-                libelle=libelle,
-                reference=self._reference(libelle),
-                montant_om=montant,
-                montant_total=normalize_amount(self._total(ligne, colonne_om)),
-                est_arrhe=self._est_arrhe(libelle),
-                date_mouvement=date_mvt,
-            )
-        )
+        # 1. Traitement Orange Money
+        if colonne_om is not None and colonne_om < len(ligne):
+            brut_om = ligne[colonne_om]
+            if brut_om not in (None, "", 0):
+                try:
+                    montant_om = parse_amount(brut_om)
+                    if montant_om > ZERO:
+                        lot.retenues.append(
+                            MouvementEncaissement(
+                                ligne_source=numero,
+                                libelle=libelle,
+                                reference=self._reference(libelle),
+                                montant_om=montant_om,
+                                montant_total=normalize_amount(self._total(ligne, colonne_om)),
+                                est_arrhe=self._est_arrhe(libelle),
+                                date_mouvement=date_mvt,
+                                mode_paiement=MODE_ORANGE_MONEY,
+                            )
+                        )
+                except AmountParseError as erreur:
+                    lot.rejeter(numero, f"montant Orange Money illisible ({erreur})")
+
+        # 2. Traitement MTN Mobile Money
+        if colonne_momo is not None and colonne_momo < len(ligne):
+            brut_momo = ligne[colonne_momo]
+            if brut_momo not in (None, "", 0):
+                try:
+                    montant_momo = parse_amount(brut_momo)
+                    if montant_momo > ZERO:
+                        ref_col = colonne_momo if colonne_om is None else min(colonne_om, colonne_momo)
+                        lot.retenues.append(
+                            MouvementEncaissement(
+                                ligne_source=numero,
+                                libelle=libelle,
+                                reference=self._reference(libelle),
+                                montant_om=montant_momo,
+                                montant_total=normalize_amount(self._total(ligne, ref_col)),
+                                est_arrhe=self._est_arrhe(libelle),
+                                date_mouvement=date_mvt,
+                                mode_paiement=MODE_MTN_MOMO,
+                            )
+                        )
+                except AmountParseError as erreur:
+                    lot.rejeter(numero, f"montant MTN Mobile Money illisible ({erreur})")
 
     @staticmethod
-    def _total(ligne: tuple, colonne_om: int) -> Any:
+    def _total(ligne: tuple, colonne_ref: int) -> Any:
         """La colonne « Total » précède les colonnes de mode dans les exports observés."""
-        for index in range(colonne_om - 1, 0, -1):
+        for index in range(colonne_ref - 1, 0, -1):
             if index < len(ligne) and isinstance(ligne[index], (int, float)):
                 return ligne[index]
         return None
@@ -415,30 +518,41 @@ class EncaissementsReader:
 
     @staticmethod
     def _collecter_recapitulatif(
-        libelle: str, ligne: tuple, colonne_om: int, recapitulatif: dict
+        libelle: str,
+        ligne: tuple,
+        colonne_om: Optional[int],
+        colonne_momo: Optional[int],
+        recapitulatif_om: dict,
+        recapitulatif_momo: dict,
     ) -> None:
         """Retient les totaux que le fichier annonce, pour contrôler la lecture."""
-        valeur = ligne[colonne_om] if colonne_om < len(ligne) else None
-        if valeur in (None, ""):
-            return
-        try:
-            montant = parse_amount(valeur)
-        except AmountParseError:
-            return
-
         cles = [normalize_key(libelle)] + [
             normalize_key(str(c)) for c in ligne if c and isinstance(c, str)
         ]
-        for cle in cles:
-            if cle.startswith("TOTAL PERIODE"):
-                recapitulatif["total"] = montant
-                break
-            elif cle == "ENCAISSEMENT D'ARRHES":
-                recapitulatif["arrhes"] = montant
-                break
-            elif cle == "ENCAISSEMENT DE FACTURES":
-                recapitulatif["factures"] = montant
-                break
+
+        def _affecter(col: Optional[int], recap: dict):
+            if col is None or col >= len(ligne):
+                return
+            val = ligne[col]
+            if val in (None, ""):
+                return
+            try:
+                montant = parse_amount(val)
+            except AmountParseError:
+                return
+            for cle in cles:
+                if cle.startswith("TOTAL PERIODE"):
+                    recap["total"] = montant
+                    break
+                elif cle == "ENCAISSEMENT D'ARRHES":
+                    recap["arrhes"] = montant
+                    break
+                elif cle == "ENCAISSEMENT DE FACTURES":
+                    recap["factures"] = montant
+                    break
+
+        _affecter(colonne_om, recapitulatif_om)
+        _affecter(colonne_momo, recapitulatif_momo)
 
     # --- période ---------------------------------------------------------------
 

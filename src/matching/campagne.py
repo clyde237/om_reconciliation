@@ -120,21 +120,34 @@ class ResultatMensuel:
 
 
 class ControleMensuel:
-    """Rapproche une série de journaux d'encaissements avec un relevé mensuel."""
+    """Rapproche une série de journaux d'encaissements avec un relevé mensuel (OM et/ou MoMo)."""
 
     def __init__(self, config: MatchingConfig = DEFAULT_MATCHING_CONFIG):
         self.config = config
         self.moteur = ReconciliationMatcher(config)
 
     def run(
-        self, lectures: Sequence[LectureEncaissements], releve: LectureOM
+        self,
+        lectures: Sequence[LectureEncaissements],
+        releve: LectureOM,
+        releve_momo: Optional[LectureOM] = None,
     ) -> ResultatMensuel:
         if not lectures:
             raise ValueError("Aucun journal des encaissements déposé.")
 
-        encaissements = releve.encaissements()
-        jours_du_releve = {t.date_operation for t in encaissements if t.date_operation}
-        periode = self._periode(lectures, releve)
+        # Rassembler toutes les transactions des relevés fournis
+        all_releve_transactions: list[TransactionOM] = list(releve.transactions)
+        transactions_valides: list[TransactionOM] = [
+            t for t in releve.transactions if t.est_encaissement_client
+        ]
+        if releve_momo is not None:
+            all_releve_transactions.extend(releve_momo.transactions)
+            transactions_valides.extend(
+                [t for t in releve_momo.transactions if t.est_encaissement_client]
+            )
+
+        jours_du_releve = {t.date_operation for t in transactions_valides if t.date_operation}
+        periode = self._periode(lectures, releve, releve_momo)
         resultat = ResultatMensuel(periode=periode)
 
         # 1. Ventiler les journaux multi-jours
@@ -163,93 +176,173 @@ class ControleMensuel:
             if jour not in jours_du_releve:
                 resultat.hors_releve.append(jour)
 
-        # 2. Préparation des flux OM et des lignes de journal
-        transactions_om_valides = [t for t in releve.transactions if t.est_encaissement_client]
-
+        # 2. Préparation des flux et des lignes de journal
         lignes_par_jour: dict[date, list[LigneJournal]] = {
             jour: list(par_jour[jour].lignes_orange_money) for jour in par_jour
         }
-        om_par_jour: dict[date, list[TransactionOM]] = {
-            jour: [t for t in transactions_om_valides if t.date_operation == jour]
+        tx_par_jour: dict[date, list[TransactionOM]] = {
+            jour: [t for t in transactions_valides if t.date_operation == jour]
             for jour in par_jour
         }
         appariements_par_jour: dict[date, list[Appariement]] = {jour: [] for jour in par_jour}
 
         # 3. PASSE 1 : Rapprochement intra-journalier (même date)
         for jour in sorted(par_jour):
-            restantes_j = lignes_par_jour[jour]
-            restantes_om = om_par_jour[jour]
+            lignes_jour = lignes_par_jour[jour]
+            tx_jour = tx_par_jour[jour]
 
-            # Niveau 1 : Référence + montant
-            appariements_par_jour[jour].extend(
-                match_reference(restantes_j, restantes_om, self.config)
-            )
-            # Niveau 2 : Date + montant identiques
-            appariements_par_jour[jour].extend(
-                match_date_montant(restantes_j, restantes_om, self.config)
-            )
-            # Niveau 3 : Date + montant + similarité client
-            appariements_par_jour[jour].extend(
-                match_client(restantes_j, restantes_om, self.config)
-            )
-            # Niveau 5 : Regroupement N-1 ou 1-N sur la même journée
-            appariements_par_jour[jour].extend(
-                match_groupe(restantes_j, restantes_om, self.config)
-            )
+            # Séparation par opérateur
+            lignes_om = [l for l in lignes_jour if l.est_orange_money]
+            lignes_momo = [l for l in lignes_jour if l.est_momo]
+            lignes_autres = [l for l in lignes_jour if not l.est_orange_money and not l.est_momo]
 
-        # 4. PASSE 2 : Détection des décalages de dates (tolérance inter-journalière)
-        restantes_j_global: list[LigneJournal] = [
-            l for jour in sorted(par_jour) for l in lignes_par_jour[jour]
+            tx_om = [
+                t
+                for t in tx_jour
+                if getattr(t, "operateur", "Orange Money") != "MTN Mobile Money"
+            ]
+            tx_momo = [
+                t
+                for t in tx_jour
+                if getattr(t, "operateur", "Orange Money") == "MTN Mobile Money"
+            ]
+
+            # Passe 1A : Même jour, même opérateur (OM avec OM, MoMo avec MoMo)
+            appariements_par_jour[jour].extend(match_reference(lignes_om, tx_om, self.config))
+            appariements_par_jour[jour].extend(match_date_montant(lignes_om, tx_om, self.config))
+            appariements_par_jour[jour].extend(match_client(lignes_om, tx_om, self.config))
+            appariements_par_jour[jour].extend(match_groupe(lignes_om, tx_om, self.config))
+
+            appariements_par_jour[jour].extend(match_reference(lignes_momo, tx_momo, self.config))
+            appariements_par_jour[jour].extend(match_date_montant(lignes_momo, tx_momo, self.config))
+            appariements_par_jour[jour].extend(match_client(lignes_momo, tx_momo, self.config))
+            appariements_par_jour[jour].extend(match_groupe(lignes_momo, tx_momo, self.config))
+
+            # Passe 1B : Même jour, croisement d'opérateur (inversion de saisie au journal)
+            # Cas 1 : Saisi OM au journal, mais payé par MoMo
+            if lignes_om and tx_momo:
+                appariements_par_jour[jour].extend(match_client(lignes_om, tx_momo, self.config))
+                appariements_par_jour[jour].extend(match_date_montant(lignes_om, tx_momo, self.config))
+            # Cas 2 : Saisi MoMo au journal, mais payé par OM
+            if lignes_momo and tx_om:
+                appariements_par_jour[jour].extend(match_client(lignes_momo, tx_om, self.config))
+                appariements_par_jour[jour].extend(match_date_montant(lignes_momo, tx_om, self.config))
+
+            # Mise à jour des restantes pour cette journée
+            lignes_par_jour[jour] = lignes_om + lignes_momo + lignes_autres
+            tx_par_jour[jour] = tx_om + tx_momo
+
+        # 4. PASSE 2 : Tolérance de dates (décalage inter-journalier ± tolerance_days)
+        # Passe 2A : Tolérance au sein du même opérateur
+        restantes_j_om = [
+            l for jour in sorted(par_jour) for l in lignes_par_jour[jour] if l.est_orange_money
         ]
-        appariees_om = {
+        restantes_j_momo = [
+            l for jour in sorted(par_jour) for l in lignes_par_jour[jour] if l.est_momo
+        ]
+
+        appariees_global = {
             t
             for apps in appariements_par_jour.values()
             for app in apps
             for t in app.transactions
         }
-        restantes_om_global: list[TransactionOM] = [
-            t for t in transactions_om_valides if t not in appariees_om
+        restantes_tx_global = [t for t in transactions_valides if t not in appariees_global]
+        restantes_tx_om = [
+            t
+            for t in restantes_tx_global
+            if getattr(t, "operateur", "Orange Money") != "MTN Mobile Money"
+        ]
+        restantes_tx_momo = [
+            t
+            for t in restantes_tx_global
+            if getattr(t, "operateur", "Orange Money") == "MTN Mobile Money"
         ]
 
-        # Niveau 4 : Montant avec tolérance de date (± tolerance_days)
-        appariements_tolerance = match_tolerance(
-            restantes_j_global, restantes_om_global, self.config
+        self._appliquer_tolerance(
+            match_tolerance(restantes_j_om, restantes_tx_om, self.config),
+            appariements_par_jour,
+            lignes_par_jour,
+            tx_par_jour,
+        )
+        self._appliquer_tolerance(
+            match_tolerance(restantes_j_momo, restantes_tx_momo, self.config),
+            appariements_par_jour,
+            lignes_par_jour,
+            tx_par_jour,
         )
 
-        for app in appariements_tolerance:
-            jour_j = app.lignes[0].jour
-            if jour_j in appariements_par_jour:
-                appariements_par_jour[jour_j].append(app)
-            for ligne in app.lignes:
-                if ligne in lignes_par_jour.get(jour_j, []):
-                    lignes_par_jour[jour_j].remove(ligne)
-            for trans in app.transactions:
-                jour_trans = trans.date_operation
-                if trans in om_par_jour.get(jour_trans, []):
-                    om_par_jour[jour_trans].remove(trans)
+        # Passe 2B : Tolérance avec croisement d'opérateur
+        restantes_j_om_apres = [
+            l for jour in sorted(par_jour) for l in lignes_par_jour[jour] if l.est_orange_money
+        ]
+        restantes_j_momo_apres = [
+            l for jour in sorted(par_jour) for l in lignes_par_jour[jour] if l.est_momo
+        ]
+
+        appariees_global_apres = {
+            t
+            for apps in appariements_par_jour.values()
+            for app in apps
+            for t in app.transactions
+        }
+        restantes_tx_global_apres = [t for t in transactions_valides if t not in appariees_global_apres]
+        restantes_tx_om_apres = [
+            t
+            for t in restantes_tx_global_apres
+            if getattr(t, "operateur", "Orange Money") != "MTN Mobile Money"
+        ]
+        restantes_tx_momo_apres = [
+            t
+            for t in restantes_tx_global_apres
+            if getattr(t, "operateur", "Orange Money") == "MTN Mobile Money"
+        ]
+
+        if restantes_j_om_apres and restantes_tx_momo_apres:
+            self._appliquer_tolerance(
+                match_tolerance(restantes_j_om_apres, restantes_tx_momo_apres, self.config),
+                appariements_par_jour,
+                lignes_par_jour,
+                tx_par_jour,
+            )
+        if restantes_j_momo_apres and restantes_tx_om_apres:
+            self._appliquer_tolerance(
+                match_tolerance(restantes_j_momo_apres, restantes_tx_om_apres, self.config),
+                appariements_par_jour,
+                lignes_par_jour,
+                tx_par_jour,
+            )
 
         # 5. Assemblage des résultats journaliers
         for jour in sorted(par_jour):
             lecture = par_jour[jour]
             lignes_initiales = lecture.lignes_orange_money
-            om_initiales = [t for t in releve.transactions if t.date_operation == jour]
-            om_valides_jour = [t for t in om_initiales if t.est_encaissement_client]
+            tx_initiales = [t for t in all_releve_transactions if t.date_operation == jour]
+            tx_valides_jour = [t for t in tx_initiales if t.est_encaissement_client]
 
             res_jour = ResultatRapprochement(
                 periode=lecture.periode,
                 appariements=appariements_par_jour[jour],
                 arrhes_sans_om=lignes_par_jour[jour],
-                recette_du_jour=om_par_jour[jour],
+                recette_du_jour=tx_par_jour[jour],
                 doublons_journal=doublons_journal(lignes_initiales),
-                doublons_om=doublons_om(om_valides_jour),
-                transactions_invalides=[t for t in om_initiales if not t.est_reussie],
+                doublons_om=doublons_om(tx_valides_jour),
+                transactions_invalides=[t for t in tx_initiales if not t.est_reussie],
             )
             resultat.journees.append(res_jour)
 
         # 6. Journées non couvertes (relevé sans journal)
+        appariees_global = {
+            t
+            for apps in appariements_par_jour.values()
+            for app in apps
+            for t in app.transactions
+        }
+        restantes_global = [t for t in transactions_valides if t not in appariees_global]
+
         for jour in sorted(jours_du_releve - set(par_jour)):
             du_jour = [
-                t for t in encaissements if t.date_operation == jour and t in restantes_om_global
+                t for t in transactions_valides if t.date_operation == jour and t in restantes_global
             ]
             if du_jour:
                 resultat.non_couvertes.append(
@@ -261,6 +354,25 @@ class ControleMensuel:
                 )
 
         return resultat
+
+    @staticmethod
+    def _appliquer_tolerance(
+        appariements: Sequence[Appariement],
+        appariements_par_jour: dict[date, list[Appariement]],
+        lignes_par_jour: dict[date, list[LigneJournal]],
+        tx_par_jour: dict[date, list[TransactionOM]],
+    ) -> None:
+        for app in appariements:
+            jour_j = app.lignes[0].jour
+            if jour_j in appariements_par_jour:
+                appariements_par_jour[jour_j].append(app)
+            for ligne in app.lignes:
+                if ligne in lignes_par_jour.get(jour_j, []):
+                    lignes_par_jour[jour_j].remove(ligne)
+            for trans in app.transactions:
+                jour_trans = trans.date_operation
+                if jour_trans in tx_par_jour and trans in tx_par_jour[jour_trans]:
+                    tx_par_jour[jour_trans].remove(trans)
 
     @staticmethod
     def _indexer(
@@ -279,10 +391,16 @@ class ControleMensuel:
         return par_jour
 
     @staticmethod
-    def _periode(lectures: Sequence[LectureEncaissements], releve: LectureOM) -> Periode:
+    def _periode(
+        lectures: Sequence[LectureEncaissements],
+        releve: LectureOM,
+        releve_momo: Optional[LectureOM] = None,
+    ) -> Periode:
         """Le relevé annonce le mois ; à défaut, l'étendue des journaux déposés."""
         if releve.periode_declaree:
             return releve.periode_declaree
+        if releve_momo and releve_momo.periode_declaree:
+            return releve_momo.periode_declaree
         jours_debut = [lecture.periode.debut for lecture in lectures]
         jours_fin = [lecture.periode.fin for lecture in lectures]
         return Periode(min(jours_debut), max(jours_fin))

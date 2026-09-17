@@ -18,6 +18,7 @@ from src.analysis.validation import JournalDecisions
 
 CLE_JOURNAUX = "lectures_encaissements"
 CLE_RELEVE = "lecture_releve"
+CLE_RELEVE_MOMO = "lecture_releve_momo"
 CLE_MENSUEL = "resultat_mensuel"
 CLE_JOURNEE = "journee_selectionnee"
 CLE_ERREUR = "erreur_import"
@@ -43,7 +44,7 @@ def fichier_temporaire(fichier_televerse) -> Iterator[Path]:
 
 
 def reinitialiser() -> None:
-    for cle in (CLE_JOURNAUX, CLE_RELEVE, CLE_MENSUEL, CLE_JOURNEE, CLE_ERREUR, CLE_DECISIONS):
+    for cle in (CLE_JOURNAUX, CLE_RELEVE, CLE_RELEVE_MOMO, CLE_MENSUEL, CLE_JOURNEE, CLE_ERREUR, CLE_DECISIONS):
         st.session_state.pop(cle, None)
 
 
@@ -51,9 +52,11 @@ def enregistrer(
     journaux: list[LectureEncaissements],
     releve: LectureOM,
     mensuel: ResultatMensuel,
+    releve_momo: Optional[LectureOM] = None,
 ) -> None:
     st.session_state[CLE_JOURNAUX] = journaux
     st.session_state[CLE_RELEVE] = releve
+    st.session_state[CLE_RELEVE_MOMO] = releve_momo
     st.session_state[CLE_MENSUEL] = mensuel
     st.session_state.pop(CLE_ERREUR, None)
     if mensuel.journees:
@@ -79,6 +82,10 @@ def mensuel() -> Optional[ResultatMensuel]:
 
 def releve() -> Optional[LectureOM]:
     return st.session_state.get(CLE_RELEVE)
+
+
+def releve_momo() -> Optional[LectureOM]:
+    return st.session_state.get(CLE_RELEVE_MOMO)
 
 
 def resultat() -> Optional[ResultatRapprochement]:

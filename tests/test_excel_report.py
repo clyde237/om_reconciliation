@@ -224,8 +224,8 @@ def test_generation_rapport_mensuel_campagne(tmp_path: Path):
     assert "NON COUVERTE (SANS JOURNAL)" in statuts
 
 
-def test_generation_rapprochement_colore_7_colonnes():
-    """Vérifie le classeur de rapprochement dédié : 7 colonnes (avec Date) et surbrillance vert / jaune / rouge."""
+def test_generation_rapprochement_colore_8_colonnes():
+    """Vérifie le classeur de rapprochement dédié : 8 colonnes (avec Date et Opérateur) et surbrillances."""
     from src.analysis.reconciliation import LigneRapprochement
     from src.reports import generer_excel_rapprochement_colore
 
@@ -238,6 +238,7 @@ def test_generation_rapprochement_colore_7_colonnes():
         ecart=Decimal("0"),
         statut=MatchStatus.CONFORME,
         observation="Rapprochement exact",
+        operateur="Orange Money",
     )
     l_manquant = LigneRapprochement(
         date_operation=date(2026, 4, 16),
@@ -248,6 +249,7 @@ def test_generation_rapprochement_colore_7_colonnes():
         ecart=Decimal("30000"),
         statut=MatchStatus.MANQUANT_OM,
         observation="Arrhe sans encaissement Orange Money",
+        operateur="Orange Money",
     )
     l_ecart = LigneRapprochement(
         date_operation=date(2026, 4, 16),
@@ -258,50 +260,67 @@ def test_generation_rapprochement_colore_7_colonnes():
         ecart=Decimal("2000"),
         statut=MatchStatus.ECART_MONTANT,
         observation="Écart de 2 000 FCFA",
+        operateur="Orange Money",
+    )
+    l_croisement = LigneRapprochement(
+        date_operation=date(2026, 4, 16),
+        reference="MOMO-001",
+        client="DELTA Marc",
+        montant_journal=Decimal("20000"),
+        montant_om=Decimal("20000"),
+        ecart=Decimal("0"),
+        statut=MatchStatus.CORRESPONDANCE_PROBABLE,
+        observation="Croisement d'opérateur constaté",
+        operateur="Orange Money ➔ MTN Mobile Money",
     )
 
-    tampon = generer_excel_rapprochement_colore([l_conforme, l_manquant, l_ecart])
+    tampon = generer_excel_rapprochement_colore([l_conforme, l_manquant, l_ecart, l_croisement])
     wb = openpyxl.load_workbook(tampon)
     assert "Rapprochement" in wb.sheetnames
     ws = wb["Rapprochement"]
 
-    # 1. Vérifier les 7 colonnes exactes
-    colonnes = [ws.cell(row=1, column=c).value for c in range(1, 8)]
+    # 1. Vérifier les 8 colonnes exactes
+    colonnes = [ws.cell(row=1, column=c).value for c in range(1, 9)]
     assert colonnes == [
         "Date",
         "Client",
-        "Référence OM",
+        "Opérateur",
+        "Référence OM/MoMo",
         "Montant journal",
-        "Montant OM",
+        "Montant Relevé",
         "Statut",
         "Observation",
     ]
 
     # 2. Ligne 2 : Conforme -> date formatée et toute la ligne en vert (DCFCE7)
     assert ws.cell(row=2, column=1).value == "16/04/2026"
-    for c in range(1, 8):
+    for c in range(1, 9):
         fill_color = ws.cell(row=2, column=c).fill.start_color.rgb
         assert fill_color in ("00DCFCE7", "DCFCE7")
 
     # 3. Ligne 3 : Manquant OM (non retrouvé) -> toute la ligne en rouge (FEE2E2)
     assert ws.cell(row=3, column=1).value == "16/04/2026"
-    for c in range(1, 8):
+    for c in range(1, 9):
         fill_color = ws.cell(row=3, column=c).fill.start_color.rgb
         assert fill_color in ("00FEE2E2", "FEE2E2")
 
     # 4. Ligne 4 : Écart montant -> cellules problématiques en jaune (FEF08A)
-    # Montant journal (col 4), Montant OM (col 5), Statut (col 6)
-    assert ws.cell(row=4, column=4).fill.start_color.rgb in ("00FEF08A", "FEF08A")
+    # Montant journal (col 5), Montant Relevé (col 6), Statut (col 7)
     assert ws.cell(row=4, column=5).fill.start_color.rgb in ("00FEF08A", "FEF08A")
     assert ws.cell(row=4, column=6).fill.start_color.rgb in ("00FEF08A", "FEF08A")
-    # Date (col 1) et Client (col 2) ont le fond neutre d'alerte (FFFBEB)
+    assert ws.cell(row=4, column=7).fill.start_color.rgb in ("00FEF08A", "FEF08A")
+    # Date (col 1), Client (col 2), Opérateur (col 3) ont le fond neutre d'alerte (FFFBEB)
     assert ws.cell(row=4, column=1).fill.start_color.rgb in ("00FFFBEB", "FFFBEB")
     assert ws.cell(row=4, column=2).fill.start_color.rgb in ("00FFFBEB", "FFFBEB")
 
-    # 5. Ligne 5 : Totaux
-    assert ws.cell(row=5, column=1).value == "TOTAL"
-    assert ws.cell(row=5, column=4).value == "=SUM(D2:D4)"
-    assert ws.cell(row=5, column=5).value == "=SUM(E2:E4)"
+    # 5. Ligne 5 : Croisement opérateur -> Opérateur (col 3) et Statut (col 7) en jaune
+    assert ws.cell(row=5, column=3).fill.start_color.rgb in ("00FEF08A", "FEF08A")
+    assert ws.cell(row=5, column=7).fill.start_color.rgb in ("00FEF08A", "FEF08A")
+
+    # 6. Ligne 6 : Totaux
+    assert ws.cell(row=6, column=1).value == "TOTAL"
+    assert ws.cell(row=6, column=5).value == "=SUM(E2:E5)"
+    assert ws.cell(row=6, column=6).value == "=SUM(F2:F5)"
 
 
 def test_section3_synthese_operations_bloquantes():
