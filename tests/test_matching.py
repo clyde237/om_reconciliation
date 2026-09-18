@@ -75,7 +75,8 @@ def test_l_heure_n_est_pas_un_critere():
 def test_niveau_4_tolerance_de_dates():
     veille = date(2026, 4, 15)
     resultat = rapprocher([arrhe(90200)], [encaissement(90200, jour=veille)])
-    assert not resultat.appariements  # hors de la journée contrôlée, donc hors périmètre
+    assert len(resultat.appariements) == 1
+    assert resultat.appariements[0].statut is MatchStatus.CORRESPONDANCE_PROBABLE
 
     periode_large = Periode(veille, JOUR)
     resultat = ReconciliationMatcher().run(
@@ -337,6 +338,22 @@ def test_paiement_apres_saisie_est_anomalie_bloquante():
     assert resultat.anomalies_bloquantes == {
         MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE: 1
     }
+
+
+def test_paiement_posterieur_est_detecte_sur_une_periode_journaliere():
+    """La fenêtre de tolérance permet de voir un paiement postérieur proche."""
+    jour_journal = date(2026, 6, 28)
+    jour_om = date(2026, 6, 30)
+
+    resultat = ReconciliationMatcher(MatchingConfig(tolerance_days=3)).run(
+        Periode.journee(jour_journal),
+        [arrhe(50000, jour=jour_journal)],
+        [encaissement(50000, reference="MP260630.1310.A80050", jour=jour_om)],
+    )
+
+    assert len(resultat.appariements) == 1
+    assert resultat.appariements[0].statut is MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE
+    assert not resultat.export_possible
 
 
 def test_cas_reel_28_au_30_juin_paiement_posterieur_bloque():

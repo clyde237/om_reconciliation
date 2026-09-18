@@ -449,7 +449,7 @@ def test_rapport_rapprochement_paiement_posterieur_ligne_entiere_jaune():
     wb = openpyxl.load_workbook(tampon)
     ws = wb["Rapprochement"]
 
-    assert ws.max_row == 2
+    assert ws.max_row == 3
     assert ws.cell(row=2, column=1).value == "28/06/2026"
     assert ws.cell(row=2, column=7).value == MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE.value
 

@@ -70,7 +70,8 @@ def observer_appariement(appariement: Appariement) -> str:
         observation = (
             f"ANOMALIE : paiement {nom_op} postérieur à la saisie/facturation. "
             f"Journal : {jour_j}, {nom_op} : {jour_om} "
-            f"(+{ecart_jours} jour(s)). "
+            f"(décalage {_jours(ecart_jours)}, soit +{ecart_jours} jour(s)). "
+            f"Montant rapproché : {format_amount(appariement.montant_journal)} {DEVISE}. "
             f"Contrôle obligatoire avant export."
         )
 
@@ -79,6 +80,15 @@ def observer_appariement(appariement: Appariement) -> str:
                 f" Écart de montant : "
                 f"{format_amount(abs(ecart))} {DEVISE}."
             )
+
+        mode_j = appariement.lignes[0].mode_paiement if appariement.lignes else ""
+        mode_t = (
+            getattr(appariement.transactions[0], "operateur", "Orange Money")
+            if appariement.transactions
+            else ""
+        )
+        if mode_j and mode_t and normalize_key(mode_j) != normalize_key(mode_t):
+            observation += f" Croisement d'opérateur : journal {mode_j}, paiement {mode_t}."
 
         return observation
 
