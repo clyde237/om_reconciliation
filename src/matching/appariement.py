@@ -42,18 +42,34 @@ class Appariement:
     @property
     def est_groupe(self) -> bool:
         return len(self.lignes) > 1 or len(self.transactions) > 1
+    
+    @property
+    def paiement_posterieur_a_saisie(self) -> bool:
+        """Vrai si un paiement OM intervient après la saisie/facturation."""
+        return any(
+            ligne.jour is not None
+            and transaction.date_operation is not None
+            and transaction.date_operation > ligne.jour
+            for ligne in self.lignes
+            for transaction in self.transactions
+        )
 
     @property
     def statut(self) -> MatchStatus:
         """Le statut porté par cet appariement.
 
-        L'ordre compte : un écart de montant prime sur tout le reste, parce qu'il
-        bloque l'export quel que soit le niveau qui a produit la correspondance.
+        Un paiement effectué après la date de saisie/facturation est une
+        anomalie bloquante, même si le montant correspond exactement.
         """
+        if self.paiement_posterieur_a_saisie:
+            return MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE
+
         if self.ecart != ZERO:
             return MatchStatus.ECART_MONTANT
+
         if self.est_groupe:
             return MatchStatus.CORRESPONDANCE_GROUPEE
+
         if self.niveau >= PROBABLE_FROM_LEVEL:
             return MatchStatus.CORRESPONDANCE_PROBABLE
         if self.lignes and self.transactions:

@@ -26,6 +26,7 @@ STATUS_COLORS: dict[MatchStatus, tuple[str, str]] = {
     MatchStatus.MANQUANT_JOURNAL: ("FFEDD5", "9A3412"),       # Orange doux
     MatchStatus.A_CONTROLER: ("FEF3C7", "92400E"),            # Ambre
     MatchStatus.STATUT_OM_INVALIDE: ("F3F4F6", "6B7280"),     # Gris
+    MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE: ("FEF08A", "854D0E"),     # Jaune pâle
 }
 
 # --- Formats numériques ---
