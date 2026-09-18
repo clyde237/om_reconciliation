@@ -17,6 +17,7 @@ class MatchStatus(str, Enum):
     STATUT_OM_INVALIDE = "STATUT_OM_INVALIDE"
     A_CONTROLER = "A_CONTROLER"
     RECETTE_JOUR = "RECETTE_JOUR"
+        PAIEMENT_POSTERIEUR_A_SAISIE = "PAIEMENT_POSTERIEUR_A_SAISIE"
 
 
 #: Statut ajouté aux neuf du §6, imposé par les sources réelles.
@@ -40,6 +41,7 @@ BLOCKING_STATUSES: frozenset[MatchStatus] = frozenset({
     MatchStatus.MANQUANT_OM,
     MatchStatus.MANQUANT_JOURNAL,
     MatchStatus.A_CONTROLER,
+    MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE,
 })
 
 

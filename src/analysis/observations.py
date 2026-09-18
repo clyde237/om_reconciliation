@@ -30,6 +30,58 @@ def _nom_court_op(op: str) -> str:
 def observer_appariement(appariement: Appariement) -> str:
     """Décrit une correspondance : ce qui la justifie, et ce qui cloche s'il y a lieu."""
     ecart = appariement.ecart
+    if appariement.paiement_posterieur_a_saisie:
+        jour_j = (
+            appariement.lignes[0].jour.strftime("%d/%m/%Y")
+            if appariement.lignes
+            else ""
+        )
+
+        jour_om = (
+            appariement.transactions[0].date_operation.strftime("%d/%m/%Y")
+            if appariement.transactions
+            and appariement.transactions[0].date_operation
+            else ""
+        )
+
+        nom_op = _nom_court_op(
+            getattr(
+                appariement.transactions[0],
+                "operateur",
+                "Orange Money",
+            )
+            if appariement.transactions
+            else "Orange Money"
+        )
+
+        ecarts = [
+            (transaction.date_operation - ligne.jour).days
+            for ligne in appariement.lignes
+            for transaction in appariement.transactions
+            if (
+                ligne.jour
+                and transaction.date_operation
+                and transaction.date_operation > ligne.jour
+            )
+        ]
+
+        ecart_jours = max(ecarts, default=0)
+
+        observation = (
+            f"ANOMALIE : paiement {nom_op} postérieur à la saisie/facturation. "
+            f"Journal : {jour_j}, {nom_op} : {jour_om} "
+            f"(+{ecart_jours} jour(s)). "
+            f"Contrôle obligatoire avant export."
+        )
+
+        if ecart:
+            observation += (
+                f" Écart de montant : "
+                f"{format_amount(abs(ecart))} {DEVISE}."
+            )
+
+        return observation
+
     if ecart:
         sens = "supérieur" if ecart > 0 else "inférieur"
         return (
@@ -149,4 +201,8 @@ def observer_statut(statut: MatchStatus) -> str:
         MatchStatus.STATUT_OM_INVALIDE: "Transaction non exploitable.",
         MatchStatus.A_CONTROLER: "Cas non résolu automatiquement.",
         MatchStatus.RECETTE_JOUR: "Recette ordinaire de la journée.",
+        MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE: (
+            "ANOMALIE : paiement postérieur à la saisie/facturation. "
+            "Contrôle obligatoire avant export."
+        ),
     }.get(statut, "")

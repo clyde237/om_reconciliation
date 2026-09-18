@@ -8,6 +8,7 @@ import pytest
 from config.matching_config import MatchLevel, MatchStatus, MatchingConfig
 from src.matching import ReconciliationMatcher, doublons_journal, doublons_om
 from src.models import LigneJournal, Periode, TransactionOM
+from src.matching.appariement import Appariement
 
 JOUR = date(2026, 4, 16)
 PERIODE = Periode.journee(JOUR)
@@ -258,3 +259,113 @@ def test_les_doublons_ne_bloquent_pas_l_export():
     assert len(resultat.doublons_journal) == 2
     assert resultat.par_statut()[MatchStatus.DOUBLON] == 2
     assert resultat.export_possible
+    
+def test_paiement_avant_saisie_est_autorise():
+    """Un paiement effectué avant la saisie/facturation n'est pas une anomalie."""
+    jour_journal = date(2026, 6, 19)
+    jour_om = date(2026, 6, 18)
+
+    ligne = arrhe(
+        7500,
+        jour=jour_journal,
+    )
+
+    transaction = encaissement(
+        7500,
+        reference="MP260618.1200.A7500",
+        jour=jour_om,
+    )
+
+    appariement = Appariement(
+        lignes=(ligne,),
+        transactions=(transaction,),
+        niveau=MatchLevel.MONTANT_DATE_TOLERANCE,
+        score=80.0,
+    )
+
+    assert not appariement.paiement_posterieur_a_saisie
+    assert appariement.statut is not MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE
+
+
+def test_paiement_le_meme_jour_est_conforme():
+    """Un paiement effectué le même jour que la saisie est conforme."""
+    jour = date(2026, 6, 19)
+
+    ligne = arrhe(7500, jour=jour)
+    transaction = encaissement(
+        7500,
+        reference="MP260619.1200.A7500",
+        jour=jour,
+    )
+
+    appariement = Appariement(
+        lignes=(ligne,),
+        transactions=(transaction,),
+        niveau=MatchLevel.DATE_MONTANT,
+        score=100.0,
+    )
+
+    assert not appariement.paiement_posterieur_a_saisie
+    assert appariement.statut is MatchStatus.CONFORME
+
+
+def test_paiement_apres_saisie_est_anomalie_bloquante():
+    """Un paiement postérieur à la saisie/facturation est une anomalie bloquante."""
+    jour_journal = date(2026, 6, 19)
+    jour_om = date(2026, 6, 22)
+    periode = Periode(jour_journal, jour_om)
+
+    ligne = arrhe(7500, jour=jour_journal)
+    transaction = encaissement(
+        7500,
+        reference="MP260622.1200.A7500",
+        jour=jour_om,
+    )
+
+    config = MatchingConfig(tolerance_days=3)
+    resultat = ReconciliationMatcher(config).run(
+        periode,
+        [ligne],
+        [transaction],
+    )
+
+    assert len(resultat.appariements) == 1
+    appariement = resultat.appariements[0]
+    assert appariement.paiement_posterieur_a_saisie
+    assert appariement.statut is MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE
+    assert not resultat.export_possible
+    assert resultat.anomalies_bloquantes == {
+        MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE: 1
+    }
+
+
+def test_cas_reel_28_au_30_juin_paiement_posterieur_bloque():
+    """Cas réel : journal du 28/06/2026, paiement OM du 30/06/2026."""
+    jour_journal = date(2026, 6, 28)
+    jour_om = date(2026, 6, 30)
+    periode = Periode(jour_journal, jour_om)
+
+    ligne = arrhe(
+        50000,
+        client="Client BAL-8233",
+        jour=jour_journal,
+        reference="BAL-8233",
+    )
+    transaction = encaissement(
+        50000,
+        reference="MP260630.1310.A80050",
+        jour=jour_om,
+    )
+
+    resultat = ReconciliationMatcher(MatchingConfig(tolerance_days=3)).run(
+        periode,
+        [ligne],
+        [transaction],
+    )
+
+    assert len(resultat.appariements) == 1
+    appariement = resultat.appariements[0]
+    assert appariement.paiement_posterieur_a_saisie
+    assert appariement.statut is MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE
+    assert not resultat.export_possible
+    assert resultat.anomalies_bloquantes[MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE] == 1

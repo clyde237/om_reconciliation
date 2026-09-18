@@ -426,3 +426,58 @@ def test_section3_synthese_aucune_bloquante():
     msg_succes = ws_syn.cell(row=row_sec3 + 1, column=1).value
     assert "Aucune opération bloquante détectée" in str(msg_succes)
 
+
+
+def test_rapport_rapprochement_paiement_posterieur_ligne_entiere_jaune():
+    """Un paiement postérieur à la saisie doit être entièrement surligné en jaune."""
+    from src.analysis.reconciliation import LigneRapprochement
+    from src.reports import generer_excel_rapprochement_colore
+
+    ligne = LigneRapprochement(
+        date_operation=date(2026, 6, 28),
+        reference="MP260630.1310.A80050",
+        client="Client BAL-8233",
+        montant_journal=Decimal("50000"),
+        montant_om=Decimal("50000"),
+        ecart=Decimal("0"),
+        statut=MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE,
+        observation="Paiement effectué le 30/06/2026, soit 2 jour(s) après la saisie du 28/06/2026.",
+        operateur="Orange Money",
+    )
+
+    tampon = generer_excel_rapprochement_colore([ligne])
+    wb = openpyxl.load_workbook(tampon)
+    ws = wb["Rapprochement"]
+
+    assert ws.max_row == 2
+    assert ws.cell(row=2, column=1).value == "28/06/2026"
+    assert ws.cell(row=2, column=7).value == MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE.value
+
+    for c in range(1, 9):
+        fill_color = ws.cell(row=2, column=c).fill.start_color.rgb
+        assert fill_color in ("00FEF08A", "FEF08A")
+
+
+def test_rapport_rapprochement_paiement_posterieur_est_bloquant():
+    """Le statut postérieur doit être visible comme anomalie bloquante dans le rapport."""
+    from src.analysis.reconciliation import LigneRapprochement
+    from src.reports import generer_excel_rapprochement_colore
+
+    ligne = LigneRapprochement(
+        date_operation=date(2026, 6, 19),
+        reference="MP260622.1200.A7500",
+        client="Client BAL-8089",
+        montant_journal=Decimal("7500"),
+        montant_om=Decimal("7500"),
+        ecart=Decimal("0"),
+        statut=MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE,
+        observation="Paiement postérieur à la saisie : 22/06/2026 après 19/06/2026.",
+        operateur="Orange Money",
+    )
+
+    tampon = generer_excel_rapprochement_colore([ligne])
+    wb = openpyxl.load_workbook(tampon)
+    ws = wb["Rapprochement"]
+
+    assert ws.cell(row=2, column=7).value == "PAIEMENT_POSTERIEUR_A_SAISIE"
+    assert "postérieur" in ws.cell(row=2, column=8).value.lower()

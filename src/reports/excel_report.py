@@ -164,6 +164,10 @@ class ExcelReportGenerator:
         curr_row = 2
         for ligne in lignes:
             # Détection de la catégorie
+            est_paiement_posterieur = (
+                ligne.statut == MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE
+            )
+            
             est_non_retrouve = ligne.statut in (
                 MatchStatus.MANQUANT_OM,
                 MatchStatus.MANQUANT_JOURNAL,
@@ -207,18 +211,28 @@ class ExcelReportGenerator:
             for cell in (c1, c2, c3, c4, c5, c6, c7, c8):
                 cell.border = BORDER_THIN
 
-            if est_correct:
+            if est_paiement_posterieur:
+                # Anomalie critique : toute la ligne est jaune
+                for cell in (c1, c2, c3, c4, c5, c6, c7, c8):
+                    cell.fill = fill_problem_cell
+                    cell.font = font_problem_cell
+
+            elif est_correct:
                 for cell in (c1, c2, c3, c4, c5, c6, c8):
                     cell.fill = fill_green
                     cell.font = font_green
+
                 c7.fill = fill_green
                 c7.font = font_green_bold
+
             elif est_non_retrouve:
                 for cell in (c1, c2, c3, c4, c5, c6, c8):
                     cell.fill = fill_red
                     cell.font = font_red
+
                 c7.fill = fill_red
                 c7.font = font_red_bold
+
             else:
                 # Ligne problématique à vérifier ou croisement d'opérateur
                 for cell in (c1, c2, c3, c4, c5, c6, c7, c8):
@@ -229,24 +243,20 @@ class ExcelReportGenerator:
                 c7.fill = fill_problem_cell
                 c7.font = font_problem_cell
 
-                # Croisement d'opérateur : colonne Opérateur en surbrillance jaune
                 if est_croisement:
                     c3.fill = fill_problem_cell
                     c3.font = font_problem_cell
 
-                # Écart de montant : cellules montants en jaune
                 if ligne.montant_journal != ligne.montant_om:
                     c5.fill = fill_problem_cell
                     c5.font = font_problem_cell
                     c6.fill = fill_problem_cell
                     c6.font = font_problem_cell
 
-                # Doublon : référence en jaune
                 if ligne.statut == MatchStatus.DOUBLON:
                     c4.fill = fill_problem_cell
                     c4.font = font_problem_cell
 
-                # À contrôler : observation en jaune
                 if ligne.statut == MatchStatus.A_CONTROLER:
                     c8.fill = fill_problem_cell
                     c8.font = font_problem_cell
