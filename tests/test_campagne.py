@@ -203,18 +203,18 @@ def test_decalage_date_tolerance_2_jours(tmp_path):
     assert len(jour_10.appariements) == 1
     app = jour_10.appariements[0]
     assert app.niveau is MatchLevel.MONTANT_DATE_TOLERANCE
-    assert app.statut is MatchStatus.CORRESPONDANCE_PROBABLE
+    assert app.statut is MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE
     assert app.lignes[0].jour == date(2026, 5, 10)
     assert app.transactions[0].date_operation == date(2026, 5, 12)
     # Observation détaillée
     from src.analysis.observations import observer_appariement
     obs = observer_appariement(app)
     assert "décalage de 2 jours" in obs
-    assert "journal : 10/05/2026" in obs
+    assert "Journal : 10/05/2026" in obs
     assert "OM : 12/05/2026" in obs
     from src.normalization.amounts import format_amount
     assert f"{format_amount(50000)} FCFA" in obs
-    assert "à valider" in obs
+    assert "Contrôle obligatoire avant export" in obs
 
 
 def test_decalage_date_hors_tolerance_reste_non_rapproche(tmp_path):
@@ -411,7 +411,7 @@ def test_inversion_operateur_avec_decalage_date(tmp_path):
 
     assert len(jour.appariements) == 1
     app = jour.appariements[0]
-    assert app.statut == MatchStatus.CORRESPONDANCE_PROBABLE
+    assert app.statut == MatchStatus.PAIEMENT_POSTERIEUR_A_SAISIE
     obs = observer_appariement(app)
     assert "Croisement d'opérateur" in obs
     assert "décalage de 2 jours" in obs
