@@ -7,9 +7,12 @@ import streamlit as st
 
 from src.matching import ControleMensuel
 from src.normalization.amounts import format_amount
-from src.readers import EncaissementsReader, MomoReader, OMReader
+from src.readers import EncaissementsReader, MomoReader, OMReader, fusionner_lectures
 from ui import session
 from ui.components import render_header
+
+
+MAX_RELEVES = 30
 
 
 def _deballer_journaux(fichiers_televerses) -> list[tuple[str, bytes]]:
@@ -63,30 +66,38 @@ def render_upload_view():
 
     with colonne_om:
         st.subheader("2. Relevé Orange Money")
-        fichier_om = st.file_uploader(
-            "Relevé mensuel Orange Money", type=["xlsx", "xls"], key="upload_om"
+        fichiers_om = st.file_uploader(
+            "Relevés Orange Money (jusqu'à 30 fichiers mensuels)",
+            type=["xlsx", "xls"],
+            accept_multiple_files=True,
+            key="upload_om",
         )
-        if fichier_om:
-            st.caption(f"Sélectionné : {fichier_om.name}")
+        if fichiers_om:
+            st.caption(f"{len(fichiers_om)} relevé(s) OM sélectionné(s)")
 
     with colonne_momo:
         st.subheader("3. Relevé MTN MoMo")
-        fichier_momo = st.file_uploader(
-            "Relevé mensuel MTN Mobile Money (optionnel)",
+        fichiers_momo = st.file_uploader(
+            "Relevés MTN Mobile Money (jusqu'à 30 fichiers, optionnel)",
             type=["xlsx", "xls"],
+            accept_multiple_files=True,
             key="upload_momo",
             help="Permet de vérifier les flux MoMo et de détecter les inversions de saisie de l'opérateur (OM ➔ MoMo).",
         )
-        if fichier_momo:
-            st.caption(f"Sélectionné : {fichier_momo.name}")
+        if fichiers_momo:
+            st.caption(f"{len(fichiers_momo)} relevé(s) MoMo sélectionné(s)")
 
     st.markdown("---")
 
     manquants = []
     if not journaux:
         manquants.append("au moins un journal des encaissements (ou une archive ZIP)")
-    if fichier_om is None:
+    if not fichiers_om:
         manquants.append("le relevé Orange Money")
+    if len(fichiers_om) > MAX_RELEVES:
+        manquants.append(f"au maximum {MAX_RELEVES} relevés Orange Money")
+    if len(fichiers_momo) > MAX_RELEVES:
+        manquants.append(f"au maximum {MAX_RELEVES} relevés MoMo")
     if manquants:
         st.info(f"Il manque {' et '.join(manquants)} pour lancer le contrôle.")
 
@@ -95,7 +106,7 @@ def render_upload_view():
         type="primary",
         disabled=bool(manquants),
     ):
-        _lancer(journaux, fichier_om, fichier_momo)
+        _lancer(journaux, fichiers_om, fichiers_momo)
 
     if session.erreur():
         st.error(session.erreur())
@@ -103,7 +114,17 @@ def render_upload_view():
         _rapport_import()
 
 
-def _lancer(journaux, fichier_om, fichier_momo=None) -> None:
+def _lire_releves(fichiers, lecteur, libelle: str):
+    lectures = []
+    for fichier in fichiers:
+        with session.fichier_temporaire(fichier) as chemin:
+            lectures.append(lecteur(chemin).read())
+    releve = fusionner_lectures(lectures)
+    st.write(f"{libelle} : {len(releve.transactions)} transaction(s) lue(s) dans {len(fichiers)} fichier(s)")
+    return releve
+
+
+def _lancer(journaux, fichiers_om, fichiers_momo=None) -> None:
     with st.status("Contrôle en cours…", expanded=True) as etat:
         try:
             fichiers_extraits = _deballer_journaux(journaux)
@@ -132,17 +153,14 @@ def _lancer(journaux, fichier_om, fichier_momo=None) -> None:
             for nom, motif in illisibles:
                 st.warning(f"{nom} ignoré — {motif}")
 
-            st.write("Lecture du relevé Orange Money…")
-            with session.fichier_temporaire(fichier_om) as chemin:
-                releve_om = OMReader(chemin).read()
-            st.write(f"{len(releve_om.comptes)} compte(s) OM, {len(releve_om.transactions)} transaction(s)")
+            st.write("Lecture des relevés Orange Money…")
+            releve_om = _lire_releves(fichiers_om, OMReader, "Orange Money")
+            st.write(f"{len(releve_om.comptes)} compte(s) OM")
 
             releve_momo = None
-            if fichier_momo is not None:
-                st.write("Lecture du relevé MTN Mobile Money…")
-                with session.fichier_temporaire(fichier_momo) as chemin:
-                    releve_momo = MomoReader(chemin).read()
-                st.write(f"MoMo : {len(releve_momo.transactions)} transaction(s) lue(s)")
+            if fichiers_momo:
+                st.write("Lecture des relevés MTN Mobile Money…")
+                releve_momo = _lire_releves(fichiers_momo, MomoReader, "MoMo")
 
             st.write("Rapprochement combiné en cours…")
             mensuel = ControleMensuel().run(lectures, releve_om, releve_momo=releve_momo)

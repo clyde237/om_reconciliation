@@ -15,7 +15,7 @@ import pytest
 from config.matching_config import MatchStatus
 from config.settings import JOURNAUX_ENCAISSEMENTS_DIR, RELEVES_OM_DIR
 from src.models import Periode
-from src.readers import EncaissementsReader, OMReader
+from src.readers import EncaissementsReader, OMReader, fusionner_lectures
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 JOURNAL = FIXTURES / "encaissements_12-05-2026.xlsx"
@@ -87,6 +87,15 @@ def test_la_periode_declaree_est_un_controle_pas_un_filtre(releve):
 def test_l_heure_est_lue(releve):
     transaction = next(t for t in releve.transactions if t.numero == 2)
     assert transaction.heure == time(11, 10, 44)
+
+
+def test_plusieurs_releves_mensuels_sont_fusionnes(releve):
+    fusion = fusionner_lectures([releve, releve])
+
+    assert len(fusion.transactions) == 2 * len(releve.transactions)
+    assert len(fusion.commissions) == 2 * len(releve.commissions)
+    assert len(fusion.comptes) == len(releve.comptes)
+    assert fusion.periode_declaree == releve.periode_declaree
 
 
 # --- Les deux sources ensemble -------------------------------------------------
