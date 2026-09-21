@@ -6,7 +6,7 @@ from .encaissements_reader import (
     MouvementEncaissement,
 )
 from .momo_reader import MomoReader
-from .om_reader import CompteOM, LectureOM, OMReader
+from .om_reader import CompteOM, LectureOM, OMReader, fusionner_lectures
 from .sage_template_reader import SageTemplateReader
 
 __all__ = [
@@ -17,5 +17,6 @@ __all__ = [
     "LectureOM",
     "MomoReader",
     "OMReader",
+    "fusionner_lectures",
     "SageTemplateReader",
 ]

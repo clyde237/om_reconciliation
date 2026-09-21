@@ -68,6 +68,39 @@ class LectureOM:
         return {compte.numero: compte for compte in self.comptes}
 
 
+def fusionner_lectures(lectures: list[LectureOM]) -> LectureOM:
+    """Fusionne plusieurs fichiers de relevé d'un même opérateur."""
+    if not lectures:
+        raise ValueError("Aucun relevé à fusionner.")
+
+    comptes: dict[str, CompteOM] = {}
+    transactions = []
+    commissions = []
+    rejets = []
+    periodes = []
+    for lecture in lectures:
+        comptes.update({compte.numero: compte for compte in lecture.comptes})
+        transactions.extend(lecture.transactions)
+        commissions.extend(lecture.commissions)
+        rejets.extend(lecture.lot.rejets)
+        if lecture.periode_declaree is not None:
+            periodes.append(lecture.periode_declaree)
+
+    lot = LotImport(retenues=transactions, rejets=rejets)
+    periode = None
+    if periodes:
+        periode = Periode(
+            min(periode.debut for periode in periodes),
+            max(periode.fin for periode in periodes),
+        )
+    return LectureOM(
+        lot=lot,
+        comptes=list(comptes.values()),
+        commissions=commissions,
+        periode_declaree=periode,
+    )
+
+
 class OMReader:
     """Charge un relevé Orange Money et en extrait les transactions par compte."""
 
