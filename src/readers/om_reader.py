@@ -14,8 +14,12 @@ from typing import Any, Optional, Union
 
 from openpyxl import load_workbook
 
-from config.settings import OM_COLUMN_ALIASES
-from src.models import LotImport, Periode, TransactionOM
+from config.settings import (
+    OM_COLONNES_ESSENTIELLES,
+    OM_COLUMN_ALIASES,
+    OM_COLUMN_DEFAULTS,
+)
+from src.models import STATUT_ECHEC, STATUT_SUCCES, LotImport, Periode, TransactionOM
 from src.normalization.amounts import normalize_amount
 from src.normalization.dates import DateParseError, normalize_date, parse_date
 from src.normalization.text import clean_text, normalize_key
@@ -48,6 +52,9 @@ class LectureOM:
     comptes: list[CompteOM] = field(default_factory=list)
     commissions: list[TransactionOM] = field(default_factory=list)
     periode_declaree: Optional[Periode] = None
+    #: Colonnes que la ligne d'en-tête n'a pas permis d'identifier, déduites de la
+    #: disposition positionnelle. Non vide = en-tête brouillé par les fusions.
+    colonnes_deduites: list[str] = field(default_factory=list)
 
     @property
     def transactions(self) -> list[TransactionOM]:
@@ -118,8 +125,8 @@ class OMReader:
         finally:
             classeur.close()
 
-        colonnes = self._mapper_colonnes(lignes)
-        lecture = LectureOM()
+        colonnes, deduites = self._mapper_colonnes(lignes)
+        lecture = LectureOM(colonnes_deduites=deduites)
         compte_courant = ""
 
         for numero, ligne in enumerate(lignes, start=1):
@@ -139,37 +146,107 @@ class OMReader:
 
     # --- correspondance des colonnes -------------------------------------------
 
-    def _mapper_colonnes(self, lignes: list[tuple]) -> dict[str, int]:
-        """Cherche la seule ligne d'en-tête exploitable et en tire la correspondance.
+    def _mapper_colonnes(self, lignes: list[tuple]) -> tuple[dict[str, int], list[str]]:
+        """Associe chaque champ à sa colonne, par les en-têtes puis par la position.
 
-        Les autres en-têtes du fichier sont brouillés par les cellules fusionnées :
-        on y trouve « Généré le : » en guise de nom de colonne. Celui qui commence par
-        « N° » puis « Date » est le bon ; la ligne juste au-dessus porte les groupes
-        (« Agent », « Correspondant »), qui lèvent l'ambiguïté des noms dédoublés.
+        Les en-têtes de ce relevé sont brouillés par les cellules fusionnées : selon
+        l'export, on y trouve « Généré le : » ou « Réseau : » en guise de nom de
+        colonne. Aucun export journalier observé n'en présente un seul exploitable.
+
+        La lecture procède donc en trois temps. Elle retient d'abord la meilleure
+        correspondance par alias parmi toutes les lignes candidates. Elle complète
+        ensuite les champs restants par la disposition positionnelle, constante sur
+        tous les exports observés. Elle vérifie enfin la colonne du statut sur les
+        données elles-mêmes — c'est la seule dont une erreur est silencieuse : un
+        statut vide écarte toute la journée du rapprochement sans rien signaler.
         """
+        meilleure: dict[str, int] = {}
         for rang, ligne in enumerate(lignes):
             cles = [normalize_key(c) for c in ligne]
             if len(cles) < 2 or cles[0] not in {"NO", "N"} or cles[1] != "DATE":
                 continue
-            groupes = self._groupes(lignes[rang - 1]) if rang else {}
-            colonnes: dict[str, int] = {}
-            for index, cle in enumerate(cles):
-                if not cle:
-                    continue
-                groupe = groupes.get(index, "")
-                for champ, alias in OM_COLUMN_ALIASES.items():
-                    if champ in colonnes:
-                        continue
-                    if f"{groupe} {cle}".strip() in alias or cle in alias:
-                        colonnes[champ] = index
-                        break
-            if "date" in colonnes and "credit" in colonnes:
-                return colonnes
+            colonnes = self._par_alias(cles, self._groupes(lignes[rang - 1]) if rang else {})
+            if len(colonnes) > len(meilleure):
+                meilleure = colonnes
 
-        raise ValueError(
-            f"Aucune ligne d'en-tête exploitable dans {self.filepath.name} : "
-            "les colonnes du relevé n'ont pas pu être identifiées."
-        )
+        if "date" not in meilleure:
+            raise ValueError(
+                f"Aucune ligne d'en-tête exploitable dans {self.filepath.name} : "
+                "les colonnes du relevé n'ont pas pu être identifiées."
+            )
+
+        deduites = self._completer_par_position(meilleure, lignes)
+        self._verifier_statut(meilleure, lignes, deduites)
+
+        manquantes = [c for c in OM_COLONNES_ESSENTIELLES if c not in meilleure]
+        if manquantes:
+            raise ValueError(
+                f"Colonnes essentielles introuvables dans {self.filepath.name} : "
+                f"{', '.join(manquantes)}."
+            )
+        return meilleure, deduites
+
+    @staticmethod
+    def _par_alias(cles: list[str], groupes: dict[int, str]) -> dict[str, int]:
+        """La ligne de groupe lève l'ambiguïté des noms dédoublés (« N° de Compte »)."""
+        colonnes: dict[str, int] = {}
+        for index, cle in enumerate(cles):
+            if not cle:
+                continue
+            groupe = groupes.get(index, "")
+            for champ, alias in OM_COLUMN_ALIASES.items():
+                if champ in colonnes:
+                    continue
+                if f"{groupe} {cle}".strip() in alias or cle in alias:
+                    colonnes[champ] = index
+                    break
+        return colonnes
+
+    @staticmethod
+    def _completer_par_position(colonnes: dict[str, int], lignes: list[tuple]) -> list[str]:
+        """Comble les champs non identifiés par la disposition positionnelle."""
+        largeur = max((len(ligne) for ligne in lignes), default=0)
+        deduites = []
+        occupees = set(colonnes.values())
+        for champ, index in OM_COLUMN_DEFAULTS.items():
+            if champ in colonnes or index >= largeur or index in occupees:
+                continue
+            colonnes[champ] = index
+            occupees.add(index)
+            deduites.append(champ)
+        return deduites
+
+    def _verifier_statut(
+        self, colonnes: dict[str, int], lignes: list[tuple], deduites: list[str]
+    ) -> None:
+        """Confirme la colonne du statut sur les données, ou la relocalise.
+
+        Une colonne de statut fausse ne produit aucune erreur : elle vide simplement
+        le statut, et toutes les transactions du fichier cessent d'être réussies.
+        """
+        attendus = {normalize_key(STATUT_SUCCES), normalize_key(STATUT_ECHEC)}
+        candidates = self._colonnes_de_statut(lignes, attendus)
+        if not candidates:
+            return  # relevé sans aucune ligne de transaction : rien à confirmer
+
+        actuelle = colonnes.get("statut")
+        if actuelle in candidates:
+            return
+        colonnes["statut"] = candidates[0]
+        if "statut" not in deduites:
+            deduites.append("statut")
+
+    @staticmethod
+    def _colonnes_de_statut(lignes: list[tuple], attendus: set[str]) -> list[int]:
+        """Colonnes dont les valeurs ressemblent à des statuts, les plus sûres d'abord."""
+        scores: dict[int, int] = {}
+        for ligne in lignes:
+            if not ligne or not isinstance(ligne[0], int):
+                continue
+            for index, cellule in enumerate(ligne):
+                if normalize_key(cellule) in attendus:
+                    scores[index] = scores.get(index, 0) + 1
+        return sorted(scores, key=lambda index: (-scores[index], index))
 
     @staticmethod
     def _groupes(ligne: tuple) -> dict[int, str]:
