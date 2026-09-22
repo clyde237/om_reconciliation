@@ -168,3 +168,70 @@ def test_sur_les_fichiers_reels():
     assert not resultat.arrhes_sans_om
     assert resultat.invariant_respecte()
     assert resultat.export_possible
+
+
+# --- En-têtes entièrement brouillés --------------------------------------------
+
+
+def _releve_aux_entetes_brouilles(chemin):
+    """Reproduit un export journalier dont aucun en-tête n'est exploitable.
+
+    Les cellules fusionnées y écrivent « Généré le : » à la place de « Statut » et
+    « Réseau : » à la place de « N° de Compte ». Observé sur les relevés journaliers
+    de septembre 2026.
+    """
+    from openpyxl import Workbook
+
+    classeur = Workbook()
+    feuille = classeur.active
+    feuille.append(["Début de Période :", None, None, "08/09/2026"])
+    feuille.append(["Fin de Période :", None, None, "08/09/2026"])
+    feuille.append(["Relevé de vos opérations", None, None, "656009773"])
+    feuille.append([".", None, None, "RELAIS DJELEN - Cameroun, 1220005, Bafoussam"])
+    feuille.append(["Début de Période :", None, None, "USSD - 656009773"])
+    feuille.append([None, None, None, None, "Orange Money", None, None, None,
+                    "Type de rapport :", None, None, "Correspondant", None,
+                    "Montant (XAF)", None, "Commissions (XAF)"])
+    feuille.append(["N°", "Date", "Heure", "Référence", "Service", "Application :",
+                    "Généré le :", "Mode", "Réseau :", "Wallet", "N° Pseudo",
+                    "Réseau :", "Wallet", "Débit", "Crédit", "Compte: 698186110",
+                    "Sous-réseau"])
+    feuille.append([3, "08/09/2026", "14:12:15", "MP260908.1412.D53846",
+                    "Merchant Payment", "Transaction", "Succès", "USSD", "656009773",
+                    "Normal", None, "697432347", "Normal", None, 120200, 0, -1202])
+    classeur.save(chemin)
+    return chemin
+
+
+def test_un_entete_entierement_brouille_ne_fait_pas_disparaitre_la_journee(tmp_path):
+    """Régression : le 08/09/2026 manquait à la synthèse alors qu'il était au relevé.
+
+    Aucun en-tête du fichier n'étant exploitable, la colonne « Statut » restait non
+    identifiée. Le statut lu était vide, aucune transaction n'était réussie, et la
+    journée sortait du rapprochement sans la moindre erreur.
+    """
+    lecture = OMReader(_releve_aux_entetes_brouilles(tmp_path / "daily.xlsx")).read()
+
+    assert len(lecture.transactions) == 1
+    encaissements = lecture.encaissements()
+    assert len(encaissements) == 1
+
+    transaction = encaissements[0]
+    assert transaction.statut == "Succès"
+    assert transaction.est_reussie
+    assert transaction.date_operation == date(2026, 9, 8)
+    assert transaction.montant == Decimal("120200")
+    assert transaction.compte_agent == "656009773"
+    assert transaction.correspondant == "697432347"
+
+
+def test_les_colonnes_deduites_sont_signalees(tmp_path):
+    """Un repli positionnel n'est jamais silencieux : le rapport d'import le dit."""
+    lecture = OMReader(_releve_aux_entetes_brouilles(tmp_path / "daily.xlsx")).read()
+    assert "statut" in lecture.colonnes_deduites
+    assert "compte_agent" in lecture.colonnes_deduites
+
+
+def test_un_entete_lisible_ne_declenche_aucun_repli(releve):
+    """Sur un export dont l'en-tête est propre, rien n'est déduit de la position."""
+    assert "statut" not in releve.colonnes_deduites

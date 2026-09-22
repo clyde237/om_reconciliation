@@ -121,6 +121,16 @@ def _lire_releves(fichiers, lecteur, libelle: str):
             lectures.append(lecteur(chemin).read())
     releve = fusionner_lectures(lectures)
     st.write(f"{libelle} : {len(releve.transactions)} transaction(s) lue(s) dans {len(fichiers)} fichier(s)")
+
+    # Un en-tête brouillé par les cellules fusionnées fait tomber la lecture sur la
+    # disposition positionnelle. Le signaler : une colonne de statut mal placée vide
+    # le statut, et la journée sort du rapprochement sans la moindre erreur.
+    deduites = sorted({champ for lecture in lectures for champ in lecture.colonnes_deduites})
+    if deduites:
+        st.caption(
+            f"{libelle} — en-tête incomplet dans {len(fichiers)} fichier(s) : "
+            f"colonne(s) {', '.join(deduites)} déduite(s) de la disposition du relevé."
+        )
     return releve
 
 

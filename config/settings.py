@@ -92,3 +92,35 @@ MOMO_COLUMN_ALIASES = frozenset({
     "MOMO",
     "MOBILE MONEY",
 })
+
+
+#: Disposition positionnelle du relevé, constante sur tous les exports observés
+#: — mensuels d'avril 2026 comme journaliers de septembre 2026.
+#:
+#: Elle sert de **repli** quand les cellules fusionnées brouillent la ligne d'en-tête.
+#: Certains exports journaliers y écrivent « Généré le : » à la place de « Statut »
+#: et « Réseau : » à la place de « N° de Compte » : sans repli, le statut reste vide,
+#: aucune transaction n'est reconnue comme réussie, et la journée disparaît de la
+#: synthèse alors que ses opérations figurent bien dans le fichier.
+OM_COLUMN_DEFAULTS: dict[str, int] = {
+    "numero": 0,
+    "date": 1,
+    "heure": 2,
+    "reference": 3,
+    "service": 4,
+    "paiement": 5,
+    "statut": 6,
+    "mode": 7,
+    "compte_agent": 8,
+    "wallet_agent": 9,
+    "pseudo": 10,
+    "correspondant": 11,
+    "wallet_correspondant": 12,
+    "debit": 13,
+    "credit": 14,
+    "commission_compte": 15,
+    "commission": 16,
+}
+
+#: Champs sans lesquels le rapprochement est faux plutôt qu'incomplet.
+OM_COLONNES_ESSENTIELLES = ("date", "credit", "statut", "service")
